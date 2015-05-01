@@ -2,7 +2,7 @@ package main
 
 // TODO: Add modulo to use smaller int and prevent buffer overflow
 // TODO: Optimize algo, bit shifting instead of modulo?
-// TODO: Handle errors
+// TODO: Handle errors, especially from readFull (when we still have bytes but have reached the end)
 // TODO: When reading, need to remember what is the current length in window (say we read less than len(window))
 // TODO: Defer file closing
 // TODO: Have currBlock and currByte share same underlying array for memory optimization
@@ -10,6 +10,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/md5"
 	"flag"
 	"fmt"
 	"log"
@@ -24,10 +25,17 @@ var memprofile = flag.String("memprofile", "", "write memory profile to this fil
 type WindowBytes struct {
 	// The current bytes for this window
 	currBytes []byte
-	// The current bytes for this block (meaning at least the size of currBytes)
-	currBlock  []byte
+	// Start index since this is a circling window
 	startIndex int
-	length     int
+	// Length of bytes used in the circling window, since we may read less than window
+	length int
+	// The current bytes for this block (meaning at least the size of currBytes)
+	currBlock []byte
+}
+
+type BlockHash struct {
+	length int
+	hash   [16]byte
 }
 
 func (w *WindowBytes) init(windowSize int) {
@@ -89,6 +97,7 @@ func (w *WindowBytes) readFull(reader *bufio.Reader) (n int, err error) {
 	copy(w.currBlock, w.currBytes)
 	// Truncate off the rest
 	w.currBlock = w.currBlock[0:w.length]
+
 	return c, err
 }
 
@@ -129,21 +138,28 @@ func main() {
 	var c, index, cmatch, lenmin, lenmax, lencurr int = 0, 0, 0, -1, -1, -1
 	var under, _100, _200, _300, _400, _500, _plus int = 0, 0, 0, 0, 0, 0, 0
 	var hash, primeRoot uint64 = 0, 31
-	var windowSize = 1024
-	var mask uint64 = (1 << 19) - 1
+	var hashblock [16]byte
+	// Init with 1000
+	// TODO: Have all under variables for better configuration
+	var arrBlockHash []BlockHash
+	//var windowSize = 1024
+	//var mask uint64 = (1 << 19) - 1
+	var windowSize = 3
+	var mask uint64 = (1 << 2) - 1
 	var currByte byte
 	var window WindowBytes
+
 	window.init(windowSize)
 
 	// Read file
-	f, err := os.Open("/home/thierry/projects/vol")
+	f, err := os.Open("/home/thierry/projects/vol.test")
 	check(err)
 	reader := bufio.NewReader(f)
 
 	// Reset the read window, we'll slide from there
 	lencurr, err = window.readFull(reader)
 	c += lencurr
-	// Calculate window hash (first time
+	// Calculate window hash (first time)
 	for index, currByte = range window.currBytes {
 		hash += uint64(currByte) * iPow(primeRoot, windowSize-index-1)
 	}
@@ -174,15 +190,17 @@ func main() {
 				_plus++
 			}
 
+			// New match, md5 it
 			cmatch++
+			hashblock = md5.Sum(window.currBlock)
+			arrBlockHash = append(arrBlockHash, BlockHash{length: lencurr, hash: hashblock})
+			fmt.Printf("%x\n", hashblock)
+			fmt.Printf("%s\n\n", window.currBlock)
 
 			// Reset the read window, we'll slide from there
 			lencurr, err = window.readFull(reader)
-			if err != nil {
-				break
-			}
 			c += lencurr
-			// Calculate window hash
+			// Calculate next window hash
 			for index, currByte = range window.currBytes {
 				hash += uint64(currByte) * iPow(primeRoot, windowSize-index-1)
 			}
@@ -219,6 +237,12 @@ func main() {
 		}
 	}
 
+	// Last block
+	hashblock = md5.Sum(window.currBlock)
+	arrBlockHash = append(arrBlockHash, BlockHash{length: lencurr, hash: hashblock})
+	fmt.Printf("%x\n", hashblock)
+	fmt.Printf("%s\n\n", window.currBlock)
+
 	if *memprofile != "" {
 		f1, err := os.Create(*memprofile)
 		if err != nil {
@@ -237,4 +261,3 @@ func main() {
 	elapsed := time.Since(start)
 	fmt.Printf("Binomial took %s\n", elapsed)
 }
-
