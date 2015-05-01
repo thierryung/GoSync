@@ -38,6 +38,12 @@ type BlockHash struct {
 	hash   [16]byte
 }
 
+type FileHashParam struct {
+	filepath           string
+	windowSize            int
+	hash, primeRoot, mask uint64
+}
+
 func (w *WindowBytes) init(windowSize int) {
 	// Init our window byte
 	w.currBytes = make([]byte, windowSize)
@@ -122,37 +128,19 @@ func iPow(a uint64, b int) uint64 {
 	return result
 }
 
-func main() {
-
-	flag.Parse()
-	if *cpuprofile != "" {
-		f, err := os.Create(*cpuprofile)
-		if err != nil {
-			log.Fatal(err)
-		}
-		pprof.StartCPUProfile(f)
-		defer pprof.StopCPUProfile()
-	}
-
-	start := time.Now()
+func hashFile(param FileHashParam) []BlockHash {
 	var c, index, cmatch, lenmin, lenmax, lencurr int = 0, 0, 0, -1, -1, -1
 	var under, _100, _200, _300, _400, _500, _plus int = 0, 0, 0, 0, 0, 0, 0
-	var hash, primeRoot uint64 = 0, 31
-	var hashblock [16]byte
-	// Init with 1000
-	// TODO: Have all under variables for better configuration
-	var arrBlockHash []BlockHash
-	//var windowSize = 1024
-	//var mask uint64 = (1 << 19) - 1
-	var windowSize = 3
-	var mask uint64 = (1 << 2) - 1
+	var hash uint64 = 0
 	var currByte byte
 	var window WindowBytes
+	var hashblock [16]byte
+	var arrBlockHash []BlockHash
 
-	window.init(windowSize)
+	window.init(param.windowSize)
 
 	// Read file
-	f, err := os.Open("/home/thierry/projects/vol.test")
+	f, err := os.Open(param.filepath)
 	check(err)
 	reader := bufio.NewReader(f)
 
@@ -161,12 +149,12 @@ func main() {
 	c += lencurr
 	// Calculate window hash (first time)
 	for index, currByte = range window.currBytes {
-		hash += uint64(currByte) * iPow(primeRoot, windowSize-index-1)
+		hash += uint64(currByte) * iPow(param.primeRoot, param.windowSize-index-1)
 	}
 
 	for {
 		// Check if we fit the match, and at least a certain amount of bytes
-		if (hash | mask) == hash {
+		if (hash | param.mask) == hash {
 			if lenmax == -1 || lencurr > lenmax {
 				lenmax = lencurr
 			}
@@ -194,15 +182,15 @@ func main() {
 			cmatch++
 			hashblock = md5.Sum(window.currBlock)
 			arrBlockHash = append(arrBlockHash, BlockHash{length: lencurr, hash: hashblock})
-			fmt.Printf("%x\n", hashblock)
-			fmt.Printf("%s\n\n", window.currBlock)
+			//fmt.Printf("%x\n", hashblock)
+			//fmt.Printf("%s\n\n", window.currBlock)
 
 			// Reset the read window, we'll slide from there
 			lencurr, err = window.readFull(reader)
 			c += lencurr
 			// Calculate next window hash
 			for index, currByte = range window.currBytes {
-				hash += uint64(currByte) * iPow(primeRoot, windowSize-index-1)
+				hash += uint64(currByte) * iPow(param.primeRoot, param.windowSize-index-1)
 			}
 
 		} else {
@@ -213,18 +201,18 @@ func main() {
 			}
 
 			// Magic hash
-			hash -= uint64(window.getFirstByte()) * iPow(primeRoot, windowSize-1)
-			hash *= primeRoot
+			hash -= uint64(window.getFirstByte()) * iPow(param.primeRoot, param.windowSize-1)
+			hash *= param.primeRoot
 			hash += uint64(currByte)
 
 			if (c % 10000000) == 0 {
-				fmt.Printf("currBlock length %d, cap %d\n", len(window.currBlock), cap(window.currBlock))
+				//fmt.Printf("currBlock length %d, cap %d\n", len(window.currBlock), cap(window.currBlock))
 			}
 
 			if hash <= 0 {
 				fmt.Println("*** BAD")
 				fmt.Println(window.getFirstByte())
-				fmt.Println(uint64(window.getFirstByte()) * iPow(primeRoot, windowSize-1))
+				fmt.Println(uint64(window.getFirstByte()) * iPow(param.primeRoot, param.windowSize-1))
 				fmt.Println(hash)
 				fmt.Println(c)
 				os.Exit(0)
@@ -243,6 +231,61 @@ func main() {
 	fmt.Printf("%x\n", hashblock)
 	fmt.Printf("%s\n\n", window.currBlock)
 
+	// TODO: Get last block
+	f.Close()
+	fmt.Printf("Found %d matches!\n", cmatch)
+	fmt.Printf("Went through %d bytes!\n", c)
+	fmt.Printf("Min block %d bytes!\n", lenmin)
+	fmt.Printf("Max block %d bytes!\n", lenmax)
+	fmt.Printf("%d, %d, %d, %d, %d, %d, %d\n", under, _100, _200, _300, _400, _500, _plus)
+
+	return arrBlockHash
+}
+
+func main() {
+
+	flag.Parse()
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
+
+	start := time.Now()
+
+	var primeRoot uint64 = 31
+	//var windowSize = 1024
+	//var mask uint64 = (1 << 19) - 1
+	var windowSize = 3
+	var mask uint64 = (1 << 2) - 1
+
+	// Init with 1000
+	// TODO: Have all under variables for better configuration
+	var arrBlockHash []BlockHash
+	var fileHashParam FileHashParam
+	var arrBlockHash2 []BlockHash
+	var fileHashParam2 FileHashParam
+
+	fileHashParam = FileHashParam{filepath: "/home/thierry/projects/vol.test", windowSize: windowSize, primeRoot: primeRoot, mask: mask}
+	arrBlockHash = hashFile(fileHashParam)
+
+	for key, val := range arrBlockHash {
+    fmt.Printf("%d, %x\n", key, val)
+  }
+
+	fileHashParam2 = FileHashParam{filepath: "/home/thierry/projects/vol2.test", windowSize: windowSize, primeRoot: primeRoot, mask: mask}
+	arrBlockHash2 = hashFile(fileHashParam2)
+
+	for key, val := range arrBlockHash2 {
+    fmt.Printf("%d, %x\n", key, val)
+  }
+
+	elapsed := time.Since(start)
+	fmt.Printf("Binomial took %s\n", elapsed)
+
 	if *memprofile != "" {
 		f1, err := os.Create(*memprofile)
 		if err != nil {
@@ -251,13 +294,4 @@ func main() {
 		pprof.WriteHeapProfile(f1)
 		f1.Close()
 	}
-	// TODO: Get last block
-	f.Close()
-	fmt.Printf("Found %d matches!\n", cmatch)
-	fmt.Printf("Went through %d bytes!\n", c)
-	fmt.Printf("Min block %d bytes!\n", lenmin)
-	fmt.Printf("Max block %d bytes!\n", lenmax)
-	fmt.Printf("%d, %d, %d, %d, %d, %d, %d\n", under, _100, _200, _300, _400, _500, _plus)
-	elapsed := time.Since(start)
-	fmt.Printf("Binomial took %s\n", elapsed)
 }
