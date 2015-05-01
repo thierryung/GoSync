@@ -39,7 +39,7 @@ type BlockHash struct {
 }
 
 type FileHashParam struct {
-	filepath           string
+	filepath              string
 	windowSize            int
 	hash, primeRoot, mask uint64
 }
@@ -273,15 +273,15 @@ func main() {
 	arrBlockHash = hashFile(fileHashParam)
 
 	for key, val := range arrBlockHash {
-    fmt.Printf("%d, %x\n", key, val)
-  }
+		fmt.Printf("%d, %x\n", key, val)
+	}
 
 	fileHashParam2 = FileHashParam{filepath: "/home/thierry/projects/vol2.test", windowSize: windowSize, primeRoot: primeRoot, mask: mask}
 	arrBlockHash2 = hashFile(fileHashParam2)
 
 	for key, val := range arrBlockHash2 {
-    fmt.Printf("%d, %x\n", key, val)
-  }
+		fmt.Printf("%d, %x\n", key, val)
+	}
 
 	elapsed := time.Since(start)
 	fmt.Printf("Binomial took %s\n", elapsed)
