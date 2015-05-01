@@ -22,6 +22,7 @@ import (
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 var memprofile = flag.String("memprofile", "", "write memory profile to this file")
 
+// Represents our circling window
 type WindowBytes struct {
 	// The current bytes for this window
 	currBytes []byte
@@ -33,15 +34,26 @@ type WindowBytes struct {
 	currBlock []byte
 }
 
+// Represents a specific block, during hashing
 type BlockHash struct {
-	length int
-	hash   [16]byte
+	length         int
+	hash           [16]byte
+	positionInFile int
 }
 
+// Convenient container with params for a file hash
 type FileHashParam struct {
 	filepath              string
 	windowSize            int
 	hash, primeRoot, mask uint64
+}
+
+// Represents a block of file
+type FileBlock struct {
+	dataToAdd      []byte
+	lengthToRemove int
+	positionInFile int
+	blockNumber    int
 }
 
 func (w *WindowBytes) init(windowSize int) {
@@ -181,7 +193,7 @@ func hashFile(param FileHashParam) []BlockHash {
 			// New match, md5 it
 			cmatch++
 			hashblock = md5.Sum(window.currBlock)
-			arrBlockHash = append(arrBlockHash, BlockHash{length: lencurr, hash: hashblock})
+			arrBlockHash = append(arrBlockHash, BlockHash{length: lencurr, hash: hashblock, positionInFile: c})
 			//fmt.Printf("%x\n", hashblock)
 			//fmt.Printf("%s\n\n", window.currBlock)
 
@@ -209,15 +221,6 @@ func hashFile(param FileHashParam) []BlockHash {
 				//fmt.Printf("currBlock length %d, cap %d\n", len(window.currBlock), cap(window.currBlock))
 			}
 
-			if hash <= 0 {
-				fmt.Println("*** BAD")
-				fmt.Println(window.getFirstByte())
-				fmt.Println(uint64(window.getFirstByte()) * iPow(param.primeRoot, param.windowSize-1))
-				fmt.Println(hash)
-				fmt.Println(c)
-				os.Exit(0)
-			}
-
 			// Add new byte read
 			window.addByte(currByte)
 			c++
@@ -240,6 +243,28 @@ func hashFile(param FileHashParam) []BlockHash {
 	fmt.Printf("%d, %d, %d, %d, %d, %d, %d\n", under, _100, _200, _300, _400, _500, _plus)
 
 	return arrBlockHash
+}
+
+func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileBlock {
+	var arrFileBlock []FileBlock
+	var i, j int = 0, 0
+	var lensource, lendest int = len(arrHashSource), len(arrHashDest)
+
+	// Loop through both arrays, find differences
+	for i < lensource && j < lendest {
+		// Matching data, simply go to next
+		if arrHashSource[i] == arrHashSource[j] {
+			i++
+			j++
+
+		} else {
+			// Non matching data
+		}
+	}
+	dataToAdd      []byte
+	lengthToRemove int
+	positionInFile int
+	blockNumber    int
 }
 
 func main() {
@@ -269,19 +294,22 @@ func main() {
 	var arrBlockHash2 []BlockHash
 	var fileHashParam2 FileHashParam
 
+	// Hash file 1
 	fileHashParam = FileHashParam{filepath: "/home/thierry/projects/vol.test", windowSize: windowSize, primeRoot: primeRoot, mask: mask}
 	arrBlockHash = hashFile(fileHashParam)
+	// for key, val := range arrBlockHash {
+	// fmt.Printf("%d, %x\n", key, val)
+	// }
 
-	for key, val := range arrBlockHash {
-		fmt.Printf("%d, %x\n", key, val)
-	}
-
+	// Hash file 2
 	fileHashParam2 = FileHashParam{filepath: "/home/thierry/projects/vol2.test", windowSize: windowSize, primeRoot: primeRoot, mask: mask}
 	arrBlockHash2 = hashFile(fileHashParam2)
+	// for key, val := range arrBlockHash2 {
+	// fmt.Printf("%d, %x\n", key, val)
+	// }
 
-	for key, val := range arrBlockHash2 {
-		fmt.Printf("%d, %x\n", key, val)
-	}
+	// Compare two files
+	compareFileHashes(arrBlockHash, arrBlockHash2)
 
 	elapsed := time.Since(start)
 	fmt.Printf("Binomial took %s\n", elapsed)
