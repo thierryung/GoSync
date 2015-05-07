@@ -217,8 +217,6 @@ func hashFile(param FileHashParam) []BlockHash {
 			cmatch++
 			hashBlock = md5.Sum(window.currBlock)
 			arrBlockHash = append(arrBlockHash, BlockHash{length: lenCurr, hash: hashBlock, positionInFile: startWindowPosition})
-			//fmt.Printf("%x\n", hashBlock)
-			//fmt.Printf("%s\n\n", window.currBlock)
 
 			// Reset the read window, we'll slide from there
 			lenCurr, err = window.readFull(reader)
@@ -253,8 +251,6 @@ func hashFile(param FileHashParam) []BlockHash {
 	if lenCurr > 0 {
 		hashBlock = md5.Sum(window.currBlock)
 		arrBlockHash = append(arrBlockHash, BlockHash{length: lenCurr, hash: hashBlock, positionInFile: startWindowPosition})
-		// fmt.Printf("%x\n", hashBlock)
-		// fmt.Printf("%s\n\n", window.currBlock)
 	}
 
 	fmt.Printf("Found %d matches!\n", cmatch)
@@ -277,28 +273,12 @@ func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 	var iHashPosSource, iHashPosDest int
 	var mapHashSource, mapHashDest map[[16]byte]int
 
-	// Prints
-	// for tmp := 0; tmp < len(arrHashSource); tmp++ {
-	// fmt.Printf("%x\n", arrHashSource[tmp].hash)
-	// }
-	// fmt.Println("----")
-	// for tmp := 0; tmp < len(arrHashDest); tmp++ {
-	// fmt.Printf("%x\n", arrHashDest[tmp].hash)
-	// }
-
 	// Loop through both arrays, find differences
 	for i < lenSource && j < lenDest {
 		// Logic for loop while currently checking a diff
 		if bIsCheckingDiff {
 			mapHashSource[arrHashSource[i].hash] = i
 			mapHashDest[arrHashDest[j].hash] = j
-
-			//fmt.Printf("Checking diff i %d, j %d, arrHashSource[i].hash %x, possource %d, arrHashDest[j].hash %x, posdest %d \n", i, j, arrHashSource[i].hash, arrHashSource[i].positionInFile, arrHashDest[j].hash, arrHashDest[j].positionInFile)
-
-			// fmt.Printf("Checking if %x exists in \n", arrHashDest[j].hash)
-			// for tmp1, tmp2 := range mapHashSource {
-			// fmt.Printf("%d %x\n", tmp2, tmp1)
-			// }
 
 			// Check if any past hash matches one of our current hash (see algo)
 			iPosMatchSource, okSource := mapHashSource[arrHashDest[j].hash]
@@ -310,7 +290,6 @@ func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 				// We're done with checking diff, go back to standard loop
 				i = iPosMatchSource
 				bIsCheckingDiff = false
-				//fmt.Println("Matching hash map")
 
 			} else if okDest {
 				arrFileChange = append(arrFileChange, FileChange{lengthToAdd: calculateLengthBetween(arrHashSource, iHashPosSource, i), positionInSourceFile: arrHashSource[iHashPosSource].positionInFile, lengthToRemove: calculateLengthBetween(arrHashDest, iHashPosDest, iPosMatchDest)})
@@ -318,17 +297,11 @@ func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 				// We're done with checking diff, go back to standard loop
 				j = iPosMatchDest
 				bIsCheckingDiff = false
-				//fmt.Println("Matching hash map")
-
-			} else {
-				// Still not found
-				//fmt.Println("NON Matching hash map")
 			}
 
 			// Go to next set
 			i++
 			j++
-			//fmt.Println("----")
 			continue
 		}
 
@@ -336,10 +309,8 @@ func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 		if arrHashSource[i].hash == arrHashDest[j].hash {
 			i++
 			j++
-			//fmt.Println("Simple matching")
 
 		} else {
-			//fmt.Printf("NON matching data, hash i %d, hash j %d\n", i, j)
 			// Non matching data, remember current state
 			bIsCheckingDiff = true
 			iHashPosSource = i
@@ -360,9 +331,6 @@ func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 	if bIsCheckingDiff || lenSource != lenDest {
 		// In this case, we're simply overriding data (removing old, adding new)
 		arrFileChange = append(arrFileChange, FileChange{lengthToAdd: calculateLengthBetween(arrHashSource, i-1, len(arrHashSource)), positionInSourceFile: arrHashSource[i-1].positionInFile, lengthToRemove: calculateLengthBetween(arrHashDest, j-1, len(arrHashDest))})
-		fmt.Println("DIFF in the last block!")
-	} else {
-		fmt.Println("Last block not diff")
 	}
 
 	return arrFileChange
@@ -527,16 +495,10 @@ func main() {
 	// Hash file 1
 	fileHashParam = FileHashParam{filepath: strFilepath1, windowSize: windowSize, primeRoot: primeRoot, mask: mask}
 	arrBlockHash = hashFile(fileHashParam)
-	// for key, val := range arrBlockHash {
-	// fmt.Printf("%d, %x\n", key, val)
-	// }
 
 	// Hash file 2
 	fileHashParam2 = FileHashParam{filepath: strFilepath2, windowSize: windowSize, primeRoot: primeRoot, mask: mask}
 	arrBlockHash2 = hashFile(fileHashParam2)
-	// for key, val := range arrBlockHash2 {
-	// fmt.Printf("%d, %x\n", key, val)
-	// }
 
 	// Compare two files
 	arrFileChange = compareFileHashes(arrBlockHash, arrBlockHash2)
@@ -545,11 +507,6 @@ func main() {
 
 	// Get difference data
 	updateDeltaData(arrFileChange, fileHashParam)
-	// i := 0
-	// for key, value := range arrFileChange {
-	// fmt.Printf("Change %d: %s, %s\n", i, key, value)
-	// i++
-	// }
 
 	// Update destination file
 	updateDestinationFile(arrFileChange, fileHashParam2)
