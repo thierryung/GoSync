@@ -2,17 +2,18 @@ package main
 
 // TODO: Add modulo to use smaller int and prevent buffer overflow
 // TODO: Optimize algo, bit shifting instead of modulo?
-// TODO: Handle errors, especially from readFull (when we still have bytes but have reached the end)
+// TODOING: Handle errors, especially from readFull (when we still have bytes but have reached the end)
 // TODO: When reading, need to remember what is the current length in window (say we read less than len(window))
-// TODO: Defer all file closing
+// TODONE: Defer all file closing
 // TODO: Have currBlock and currByte share same underlying array for memory optimization
 // TODO: Profile CPU & Memory usage
-// TODO: Variable names, decide case style
-// TODO: Need versioning, especially for conflict handling
+// TODONE: Variable names, decide case style
+// TODO: Need file versioning, especially for conflict handling
 // TODO: Make it a clean architecture
 // Tests: Add/remove char in the beginning, middle, end, random place
 // Tests: Add/remove 2 chars in the beginning, middle, end, random place
 // Tests: Add/remove multiple chars in random places
+// Tests: Unit tests!
 
 import (
 	"bufio"
@@ -129,12 +130,6 @@ func (w *WindowBytes) readFull(reader *bufio.Reader) (n int, err error) {
 	return c, err
 }
 
-func check(e error) {
-	if e != nil {
-		panic(e)
-	}
-}
-
 func iPow(a uint64, b int) uint64 {
 	var result uint64 = 1
 
@@ -159,24 +154,34 @@ func calculateLengthBetween(b []BlockHash, start, end int) int {
 }
 
 func hashFile(param FileHashParam) []BlockHash {
-	var c, startWindowPosition, index, cmatch, lenmin, lenmax, lencurr int = 0, 0, 0, 0, -1, -1, -1
+	var c, startWindowPosition, index, cmatch, lenMin, lenMax, lenCurr int = 0, 0, 0, 0, -1, -1, -1
 	var under, _100, _200, _300, _400, _500, _plus int = 0, 0, 0, 0, 0, 0, 0
 	var hash uint64 = 0
 	var currByte byte
 	var window WindowBytes
-	var hashblock [16]byte
+	var hashBlock [16]byte
 	var arrBlockHash []BlockHash
 
 	window.init(param.windowSize)
 
 	// Read file
 	f, err := os.Open(param.filepath)
-	check(err)
+	if err != nil {
+		return arrBlockHash
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			return
+		}
+	}()
 	reader := bufio.NewReader(f)
 
 	// Reset the read window, we'll slide from there
-	lencurr, err = window.readFull(reader)
-	c += lencurr
+	lenCurr, err = window.readFull(reader)
+	if err != nil {
+		return arrBlockHash
+	}
+	c += lenCurr
 	// Calculate window hash (first time)
 	for index, currByte = range window.currBytes {
 		hash += uint64(currByte) * iPow(param.primeRoot, param.windowSize-index-1)
@@ -185,24 +190,24 @@ func hashFile(param FileHashParam) []BlockHash {
 	for {
 		// Check if we fit the match, and at least a certain amount of bytes
 		if (hash | param.mask) == hash {
-			if lenmax == -1 || lencurr > lenmax {
-				lenmax = lencurr
+			if lenMax == -1 || lenCurr > lenMax {
+				lenMax = lenCurr
 			}
-			if lenmin == -1 || lencurr < lenmin {
-				lenmin = lencurr
+			if lenMin == -1 || lenCurr < lenMin {
+				lenMin = lenCurr
 			}
 
-			if lencurr < 50000 {
+			if lenCurr < 50000 {
 				under++
-			} else if lencurr < 100000 {
+			} else if lenCurr < 100000 {
 				_100++
-			} else if lencurr < 200000 {
+			} else if lenCurr < 200000 {
 				_200++
-			} else if lencurr < 300000 {
+			} else if lenCurr < 300000 {
 				_300++
-			} else if lencurr < 400000 {
+			} else if lenCurr < 400000 {
 				_400++
-			} else if lencurr < 600000 {
+			} else if lenCurr < 600000 {
 				_500++
 			} else {
 				_plus++
@@ -210,15 +215,16 @@ func hashFile(param FileHashParam) []BlockHash {
 
 			// New match, md5 it
 			cmatch++
-			hashblock = md5.Sum(window.currBlock)
-			arrBlockHash = append(arrBlockHash, BlockHash{length: lencurr, hash: hashblock, positionInFile: startWindowPosition})
-			//fmt.Printf("%x\n", hashblock)
+			hashBlock = md5.Sum(window.currBlock)
+			arrBlockHash = append(arrBlockHash, BlockHash{length: lenCurr, hash: hashBlock, positionInFile: startWindowPosition})
+			//fmt.Printf("%x\n", hashBlock)
 			//fmt.Printf("%s\n\n", window.currBlock)
 
 			// Reset the read window, we'll slide from there
-			lencurr, err = window.readFull(reader)
+			lenCurr, err = window.readFull(reader)
+			// TODO: Check error here? Since readFull can return error
 			startWindowPosition = c
-			c += lencurr
+			c += lenCurr
 			// Calculate next window hash
 			for index, currByte = range window.currBytes {
 				hash += uint64(currByte) * iPow(param.primeRoot, param.windowSize-index-1)
@@ -236,31 +242,25 @@ func hashFile(param FileHashParam) []BlockHash {
 			hash *= param.primeRoot
 			hash += uint64(currByte)
 
-			if (c % 10000000) == 0 {
-				//fmt.Printf("currBlock length %d, cap %d\n", len(window.currBlock), cap(window.currBlock))
-			}
-
 			// Add new byte read
 			window.addByte(currByte)
 			c++
-			lencurr++
+			lenCurr++
 		}
 	}
 
 	// Last block, if not empty
-	if lencurr > 0 {
-		hashblock = md5.Sum(window.currBlock)
-		arrBlockHash = append(arrBlockHash, BlockHash{length: lencurr, hash: hashblock, positionInFile: startWindowPosition})
-		// fmt.Printf("%x\n", hashblock)
+	if lenCurr > 0 {
+		hashBlock = md5.Sum(window.currBlock)
+		arrBlockHash = append(arrBlockHash, BlockHash{length: lenCurr, hash: hashBlock, positionInFile: startWindowPosition})
+		// fmt.Printf("%x\n", hashBlock)
 		// fmt.Printf("%s\n\n", window.currBlock)
 	}
 
-	// TODO: Get last block
-	f.Close()
 	fmt.Printf("Found %d matches!\n", cmatch)
 	fmt.Printf("Went through %d bytes!\n", c)
-	fmt.Printf("Min block %d bytes!\n", lenmin)
-	fmt.Printf("Max block %d bytes!\n", lenmax)
+	fmt.Printf("Min block %d bytes!\n", lenMin)
+	fmt.Printf("Max block %d bytes!\n", lenMax)
 	fmt.Printf("%d, %d, %d, %d, %d, %d, %d\n\n", under, _100, _200, _300, _400, _500, _plus)
 
 	return arrBlockHash
@@ -272,7 +272,7 @@ func hashFile(param FileHashParam) []BlockHash {
 func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 	var arrFileChange []FileChange
 	var i, j int = 0, 0
-	var lensource, lendest int = len(arrHashSource), len(arrHashDest)
+	var lenSource, lenDest int = len(arrHashSource), len(arrHashDest)
 	var bIsCheckingDiff bool = false
 	var iHashPosSource, iHashPosDest int
 	var mapHashSource, mapHashDest map[[16]byte]int
@@ -287,7 +287,7 @@ func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 	// }
 
 	// Loop through both arrays, find differences
-	for i < lensource && j < lendest {
+	for i < lenSource && j < lenDest {
 		// Logic for loop while currently checking a diff
 		if bIsCheckingDiff {
 			mapHashSource[arrHashSource[i].hash] = i
@@ -357,7 +357,7 @@ func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 
 	// We're now out of the loop, was the last block different?
 	// Or do we have a hash list longer than the other?
-	if bIsCheckingDiff || lensource != lendest {
+	if bIsCheckingDiff || lenSource != lenDest {
 		// In this case, we're simply overriding data (removing old, adding new)
 		arrFileChange = append(arrFileChange, FileChange{lengthToAdd: calculateLengthBetween(arrHashSource, i-1, len(arrHashSource)), positionInSourceFile: arrHashSource[i-1].positionInFile, lengthToRemove: calculateLengthBetween(arrHashDest, j-1, len(arrHashDest))})
 		fmt.Println("DIFF in the last block!")
@@ -370,7 +370,14 @@ func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 
 func updateDeltaData(arrFileChange []FileChange, fileHashParamSource FileHashParam) {
 	f, err := os.Open(fileHashParamSource.filepath)
-	check(err)
+	if err != nil {
+		return
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			return
+		}
+	}()
 	// Loop through our changes
 	for key := range arrFileChange {
 		if arrFileChange[key].lengthToAdd <= 0 {
@@ -378,15 +385,18 @@ func updateDeltaData(arrFileChange []FileChange, fileHashParamSource FileHashPar
 		}
 		// TODO: Better error check, check for offset ok
 		_, err := f.Seek(int64(arrFileChange[key].positionInSourceFile), 0)
-		check(err)
+		if err != nil {
+			return
+		}
 		newData := make([]byte, arrFileChange[key].lengthToAdd)
 		// TODO: Better error check, check for num read ok
 		_, err = io.ReadFull(f, newData)
-		check(err)
+		if err != nil {
+			return
+		}
 		//fmt.Printf("Read from source pos %d: %s\n", arrFileChange[key].positionInSourceFile, newData)
 		arrFileChange[key].dataToAdd = newData
 	}
-	f.Close()
 }
 
 // 1. Final data will be created in a temp file
@@ -402,12 +412,12 @@ func updateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 	// open input file
 	fi, err := os.Open(fileHashParamDest.filepath)
 	if err != nil {
-		panic(err)
+		return
 	}
 	// close fi on exit and check for its returned error
 	defer func() {
 		if err := fi.Close(); err != nil {
-			panic(err)
+			return
 		}
 	}()
 	// make a read buffer
@@ -416,12 +426,12 @@ func updateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 	// open output file
 	fo, err := os.Create(fileHashParamDest.filepath + ".tmp")
 	if err != nil {
-		panic(err)
+		return
 	}
 	// close fo on exit and check for its returned error
 	defer func() {
 		if err := fo.Close(); err != nil {
-			panic(err)
+			return
 		}
 	}()
 	// make a write buffer
@@ -435,23 +445,26 @@ func updateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 		// read a chunk
 		// TODO: Check errors
 		n, err := r.Read(buf)
-		check(err)
+		if err != nil {
+			break
+		}
 		// Write data up until position of change
 		if _, err := w.Write(buf[:n]); err != nil {
-			panic(err)
+			break
 		}
 
 		// Process the add
 		if _, err := w.Write(fileChange.dataToAdd); err != nil {
-			panic(err)
+			return
 		}
 
 		// Process the remove (skip next x bytes)
-		// TODO: Check errs
 		// For now we're "reading" bytes to move file pointer, as Seek is not supported by bufio
 		buf = make([]byte, fileChange.lengthToRemove)
 		_, err = r.Read(buf)
-		check(err)
+		if err != nil {
+			return
+		}
 
 		// Update our file pointer position
 		iLastFilePointerPosition = fileChange.positionInSourceFile + fileChange.lengthToAdd
@@ -463,7 +476,7 @@ func updateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 		// read a chunk
 		n, err := r.Read(buf)
 		if err != nil && err != io.EOF {
-			panic(err)
+			break
 		}
 		if n == 0 {
 			break
@@ -471,12 +484,12 @@ func updateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 
 		// write a chunk
 		if _, err := w.Write(buf[:n]); err != nil {
-			panic(err)
+			break
 		}
 	}
 
 	if err = w.Flush(); err != nil {
-		panic(err)
+		return
 	}
 }
 
@@ -495,15 +508,15 @@ func main() {
 	start := time.Now()
 	var primeRoot uint64 = 31
 
-	var windowSize = 1024
-	var mask uint64 = (1 << 19) - 1
-	var strFilepath1 string = "/home/thierry/projects/vol1"
-	var strFilepath2 string = "/home/thierry/projects/vol2"
+	// var windowSize = 1024
+	// var mask uint64 = (1 << 19) - 1
+	// var strFilepath1 string = "/home/thierry/projects/vol1"
+	// var strFilepath2 string = "/home/thierry/projects/vol2"
 
-	// var windowSize = 3
-	// var mask uint64 = (1 << 2) - 1
-	// var strFilepath1 string = "/home/thierry/projects/vol.test"
-	// var strFilepath2 string = "/home/thierry/projects/vol2.test"
+	var windowSize = 3
+	var mask uint64 = (1 << 2) - 1
+	var strFilepath1 string = "/home/thierry/projects/vol.test"
+	var strFilepath2 string = "/home/thierry/projects/vol2.test"
 
 	var arrBlockHash []BlockHash
 	var fileHashParam FileHashParam
@@ -513,7 +526,6 @@ func main() {
 
 	// Hash file 1
 	fileHashParam = FileHashParam{filepath: strFilepath1, windowSize: windowSize, primeRoot: primeRoot, mask: mask}
-	//fileHashParam = FileHashParam{filepath: "/home/thierry/projects/vol.test", windowSize: windowSize, primeRoot: primeRoot, mask: mask}
 	arrBlockHash = hashFile(fileHashParam)
 	// for key, val := range arrBlockHash {
 	// fmt.Printf("%d, %x\n", key, val)
