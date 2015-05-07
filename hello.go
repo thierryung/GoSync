@@ -8,6 +8,8 @@ package main
 // TODO: Have currBlock and currByte share same underlying array for memory optimization
 // TODO: Profile CPU & Memory usage
 // TODO: Variable names, decide case style
+// TODO: Need versioning, especially for conflict handling
+// TODO: Make it a clean architecture
 // Tests: Add/remove char in the beginning, middle, end, random place
 // Tests: Add/remove 2 chars in the beginning, middle, end, random place
 // Tests: Add/remove multiple chars in random places
@@ -57,13 +59,11 @@ type FileHashParam struct {
 type FileChange struct {
 	dataToAdd []byte
 	// TODO: Check if int is enough (overflow)
+	positionInSourceFile int
+	// TODO: Check if int is enough (overflow)
 	lengthToAdd int
 	// TODO: Check if int is enough (overflow)
-	positionAddFromSourceFile int
-	// TODO: Check if int is enough (overflow)
 	lengthToRemove int
-	// TODO: Check if int is enough (overflow)
-	positionRemoveFromDestFile int
 }
 
 func (w *WindowBytes) init(windowSize int) {
@@ -247,11 +247,13 @@ func hashFile(param FileHashParam) []BlockHash {
 		}
 	}
 
-	// Last block
-	hashblock = md5.Sum(window.currBlock)
-	arrBlockHash = append(arrBlockHash, BlockHash{length: lencurr, hash: hashblock})
-	// fmt.Printf("%x\n", hashblock)
-	// fmt.Printf("%s\n\n", window.currBlock)
+	// Last block, if not empty
+	if lencurr > 0 {
+		hashblock = md5.Sum(window.currBlock)
+		arrBlockHash = append(arrBlockHash, BlockHash{length: lencurr, hash: hashblock, positionInFile: startWindowPosition})
+		// fmt.Printf("%x\n", hashblock)
+		// fmt.Printf("%s\n\n", window.currBlock)
+	}
 
 	// TODO: Get last block
 	f.Close()
@@ -264,7 +266,7 @@ func hashFile(param FileHashParam) []BlockHash {
 	return arrBlockHash
 }
 
-// TODO: Handle logic when change is at the very beginning
+// TODO: Handle logic when change is at the very beginning or at the very end
 // TODO: Make a prettier loop (loop ending i++ j++)
 // TODO: Free array hash map (or check memory for every init)
 func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
@@ -284,9 +286,6 @@ func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 	// fmt.Printf("%x\n", arrHashDest[tmp].hash)
 	// }
 
-	fmt.Println(lensource)
-	fmt.Println(lendest)
-
 	// Loop through both arrays, find differences
 	for i < lensource && j < lendest {
 		// Logic for loop while currently checking a diff
@@ -301,12 +300,12 @@ func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 			// fmt.Printf("%d %x\n", tmp2, tmp1)
 			// }
 
-			// Check if any past source hash matches the last dest hash (see algo)
+			// Check if any past hash matches one of our current hash (see algo)
 			iPosMatchSource, okSource := mapHashSource[arrHashDest[j].hash]
 			iPosMatchDest, okDest := mapHashDest[arrHashSource[i].hash]
 			// In which case, we're now simply exchanging data (add/remove)
 			if okSource {
-				arrFileChange = append(arrFileChange, FileChange{lengthToAdd: calculateLengthBetween(arrHashSource, iHashPosSource, iPosMatchSource), positionAddFromSourceFile: arrHashSource[iHashPosSource].positionInFile, lengthToRemove: calculateLengthBetween(arrHashDest, iHashPosDest, j), positionRemoveFromDestFile: arrHashDest[iHashPosDest].positionInFile})
+				arrFileChange = append(arrFileChange, FileChange{lengthToAdd: calculateLengthBetween(arrHashSource, iHashPosSource, iPosMatchSource), positionInSourceFile: arrHashSource[iHashPosSource].positionInFile, lengthToRemove: calculateLengthBetween(arrHashDest, iHashPosDest, j)})
 
 				// We're done with checking diff, go back to standard loop
 				i = iPosMatchSource
@@ -314,7 +313,7 @@ func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 				//fmt.Println("Matching hash map")
 
 			} else if okDest {
-				arrFileChange = append(arrFileChange, FileChange{lengthToAdd: calculateLengthBetween(arrHashSource, iHashPosSource, i), positionAddFromSourceFile: arrHashSource[iHashPosSource].positionInFile, lengthToRemove: calculateLengthBetween(arrHashDest, iHashPosDest, iPosMatchDest), positionRemoveFromDestFile: arrHashDest[iHashPosDest].positionInFile})
+				arrFileChange = append(arrFileChange, FileChange{lengthToAdd: calculateLengthBetween(arrHashSource, iHashPosSource, i), positionInSourceFile: arrHashSource[iHashPosSource].positionInFile, lengthToRemove: calculateLengthBetween(arrHashDest, iHashPosDest, iPosMatchDest)})
 
 				// We're done with checking diff, go back to standard loop
 				j = iPosMatchDest
@@ -340,6 +339,7 @@ func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 			//fmt.Println("Simple matching")
 
 		} else {
+			//fmt.Printf("NON matching data, hash i %d, hash j %d\n", i, j)
 			// Non matching data, remember current state
 			bIsCheckingDiff = true
 			iHashPosSource = i
@@ -355,7 +355,16 @@ func compareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 		}
 	}
 
-	// TODO: Check left over from the longer array
+	// We're now out of the loop, was the last block different?
+	// Or do we have a hash list longer than the other?
+	if bIsCheckingDiff || lensource != lendest {
+		// In this case, we're simply overriding data (removing old, adding new)
+		arrFileChange = append(arrFileChange, FileChange{lengthToAdd: calculateLengthBetween(arrHashSource, i-1, len(arrHashSource)), positionInSourceFile: arrHashSource[i-1].positionInFile, lengthToRemove: calculateLengthBetween(arrHashDest, j-1, len(arrHashDest))})
+		fmt.Println("DIFF in the last block!")
+	} else {
+		fmt.Println("Last block not diff")
+	}
+
 	return arrFileChange
 }
 
@@ -364,17 +373,111 @@ func updateDeltaData(arrFileChange []FileChange, fileHashParamSource FileHashPar
 	check(err)
 	// Loop through our changes
 	for key := range arrFileChange {
+		if arrFileChange[key].lengthToAdd <= 0 {
+			continue
+		}
 		// TODO: Better error check, check for offset ok
-		_, err := f.Seek(int64(arrFileChange[key].positionAddFromSourceFile), 0)
+		_, err := f.Seek(int64(arrFileChange[key].positionInSourceFile), 0)
 		check(err)
 		newData := make([]byte, arrFileChange[key].lengthToAdd)
 		// TODO: Better error check, check for num read ok
 		_, err = io.ReadFull(f, newData)
 		check(err)
-		//fmt.Printf("Read from source pos %d: %s\n", arrFileChange[key].positionAddFromSourceFile, newData)
+		//fmt.Printf("Read from source pos %d: %s\n", arrFileChange[key].positionInSourceFile, newData)
 		arrFileChange[key].dataToAdd = newData
 	}
 	f.Close()
+}
+
+// 1. Final data will be created in a temp file
+// 2. Original file will be moved
+// 3. Temp file renamed to original
+// 4. Do some file integrity checking
+// 5. If all goes well, remove original
+func updateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHashParam) {
+	// TODO: Check if we need to manually split chunks of data read
+
+	var iToRead, iLastFilePointerPosition int = 0, 0
+
+	// open input file
+	fi, err := os.Open(fileHashParamDest.filepath)
+	if err != nil {
+		panic(err)
+	}
+	// close fi on exit and check for its returned error
+	defer func() {
+		if err := fi.Close(); err != nil {
+			panic(err)
+		}
+	}()
+	// make a read buffer
+	r := bufio.NewReader(fi)
+
+	// open output file
+	fo, err := os.Create(fileHashParamDest.filepath + ".tmp")
+	if err != nil {
+		panic(err)
+	}
+	// close fo on exit and check for its returned error
+	defer func() {
+		if err := fo.Close(); err != nil {
+			panic(err)
+		}
+	}()
+	// make a write buffer
+	w := bufio.NewWriter(fo)
+
+	// Loop through our changes
+	for _, fileChange := range arrFileChange {
+		// Read until change position
+		iToRead = fileChange.positionInSourceFile - iLastFilePointerPosition
+		buf := make([]byte, iToRead)
+		// read a chunk
+		// TODO: Check errors
+		n, err := r.Read(buf)
+		check(err)
+		// Write data up until position of change
+		if _, err := w.Write(buf[:n]); err != nil {
+			panic(err)
+		}
+
+		// Process the add
+		if _, err := w.Write(fileChange.dataToAdd); err != nil {
+			panic(err)
+		}
+
+		// Process the remove (skip next x bytes)
+		// TODO: Check errs
+		// For now we're "reading" bytes to move file pointer, as Seek is not supported by bufio
+		buf = make([]byte, fileChange.lengthToRemove)
+		_, err = r.Read(buf)
+		check(err)
+
+		// Update our file pointer position
+		iLastFilePointerPosition = fileChange.positionInSourceFile + fileChange.lengthToAdd
+	}
+
+	// Write last chunk
+	buf := make([]byte, 1024)
+	for {
+		// read a chunk
+		n, err := r.Read(buf)
+		if err != nil && err != io.EOF {
+			panic(err)
+		}
+		if n == 0 {
+			break
+		}
+
+		// write a chunk
+		if _, err := w.Write(buf[:n]); err != nil {
+			panic(err)
+		}
+	}
+
+	if err = w.Flush(); err != nil {
+		panic(err)
+	}
 }
 
 func main() {
@@ -392,15 +495,15 @@ func main() {
 	start := time.Now()
 	var primeRoot uint64 = 31
 
-	// var windowSize = 1024
-	// var mask uint64 = (1 << 19) - 1
-	// var strFilepath1 string = "/home/thierry/projects/vol"
-	// var strFilepath2 string = "/home/thierry/projects/vol1"
+	var windowSize = 1024
+	var mask uint64 = (1 << 19) - 1
+	var strFilepath1 string = "/home/thierry/projects/vol1"
+	var strFilepath2 string = "/home/thierry/projects/vol2"
 
-	var windowSize = 3
-	var mask uint64 = (1 << 2) - 1
-	var strFilepath1 string = "/home/thierry/projects/vol.test"
-	var strFilepath2 string = "/home/thierry/projects/vol2.test"
+	// var windowSize = 3
+	// var mask uint64 = (1 << 2) - 1
+	// var strFilepath1 string = "/home/thierry/projects/vol.test"
+	// var strFilepath2 string = "/home/thierry/projects/vol2.test"
 
 	var arrBlockHash []BlockHash
 	var fileHashParam FileHashParam
@@ -425,15 +528,19 @@ func main() {
 
 	// Compare two files
 	arrFileChange = compareFileHashes(arrBlockHash, arrBlockHash2)
-	fmt.Println(arrFileChange)
+	//fmt.Println(arrFileChange)
 	fmt.Printf("We found %d changes!\n", len(arrFileChange))
 
 	// Get difference data
 	updateDeltaData(arrFileChange, fileHashParam)
-	fmt.Println(arrFileChange)
+	// i := 0
+	// for key, value := range arrFileChange {
+	// fmt.Printf("Change %d: %s, %s\n", i, key, value)
+	// i++
+	// }
 
 	// Update destination file
-	//updateDestinationFile(arrFileChange, strFilepath2)
+	updateDestinationFile(arrFileChange, fileHashParam2)
 
 	elapsed := time.Since(start)
 	fmt.Printf("Binomial took %s\n", elapsed)
