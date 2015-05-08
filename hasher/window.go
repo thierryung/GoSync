@@ -16,21 +16,6 @@ type WindowBytes struct {
 	currBlock []byte
 }
 
-// Represents a specific block, during hashing
-type BlockHash struct {
-	length         int
-	hash           [16]byte
-	positionInFile int
-}
-
-func CalculateLengthBetween(b []BlockHash, start, end int) int {
-	var result int = 0
-	for i := start; i < end; i++ {
-		result += b[i].length
-	}
-	return result
-}
-
 func (w *WindowBytes) init(windowSize int) {
 	// Init our window byte
 	w.currBytes = make([]byte, windowSize)

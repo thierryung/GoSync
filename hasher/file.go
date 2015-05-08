@@ -9,6 +9,21 @@ import (
 	"thierry/sync/math"
 )
 
+// Represents a specific block, during hashing
+type BlockHash struct {
+	length         int
+	hash           [16]byte
+	positionInFile int
+}
+
+func CalculateLengthBetween(b []BlockHash, start, end int) int {
+	var result int = 0
+	for i := start; i < end; i++ {
+		result += b[i].length
+	}
+	return result
+}
+
 func HashFile(param FileHashParam) []BlockHash {
 	var c, startWindowPosition, index, cmatch, lenMin, lenMax, lenCurr int = 0, 0, 0, 0, -1, -1, -1
 	var under, _100, _200, _300, _400, _500, _plus int = 0, 0, 0, 0, 0, 0, 0
