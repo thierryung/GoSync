@@ -95,6 +95,7 @@ func HashFile(param FileHashParam) []BlockHash {
 			startWindowPosition = c
 			c += lenCurr
 			// Calculate next window hash
+			hash = 0
 			for index, currByte = range window.currBytes {
 				hash += uint64(currByte) * math.Pow(param.PrimeRoot, param.WindowSize-index-1)
 			}
