@@ -2,15 +2,26 @@ package hasher
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"os"
 )
 
+const (
+	HASH_PRIME_ROOT uint64 = 31
+	HASH_MODULO     uint64 = 1024
+
+	// HASH_WINDOW_SIZE int    = 1031
+	// HASH_MASK        uint64 = (1 << 19) - 1
+
+	HASH_WINDOW_SIZE int    = 3
+	HASH_MASK        uint64 = (1 << 2) - 1
+)
+
 // Convenient container with params for a file hash
+// TODO: Check if now container is necessary
 type FileHashParam struct {
-	Filepath              string
-	WindowSize            int
-	Hash, PrimeRoot, Mask uint64
+	Filepath string
 }
 
 func UpdateDeltaData(arrFileChange []FileChange, fileHashParamSource FileHashParam) {
@@ -25,22 +36,22 @@ func UpdateDeltaData(arrFileChange []FileChange, fileHashParamSource FileHashPar
 	}()
 	// Loop through our changes
 	for key := range arrFileChange {
-		if arrFileChange[key].lengthToAdd <= 0 {
+		if arrFileChange[key].LengthToAdd <= 0 {
 			continue
 		}
 		// TODO: Better error check, check for offset ok
-		_, err := f.Seek(int64(arrFileChange[key].positionInSourceFile), 0)
+		_, err := f.Seek(int64(arrFileChange[key].PositionInSourceFile), 0)
 		if err != nil {
 			return
 		}
-		newData := make([]byte, arrFileChange[key].lengthToAdd)
+		newData := make([]byte, arrFileChange[key].LengthToAdd)
 		// TODO: Better error check, check for num read ok
 		_, err = io.ReadFull(f, newData)
 		if err != nil {
 			return
 		}
-		//fmt.Printf("Read from source pos %d: %s\n", arrFileChange[key].positionInSourceFile, newData)
-		arrFileChange[key].dataToAdd = newData
+		//fmt.Printf("Read from source pos %d: %s\n", arrFileChange[key].PositionInSourceFile, newData)
+		arrFileChange[key].DataToAdd = newData
 	}
 }
 
@@ -50,6 +61,8 @@ func UpdateDeltaData(arrFileChange []FileChange, fileHashParamSource FileHashPar
 // 4. Do some file integrity checking
 // 5. If all goes well, remove original
 func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHashParam) {
+	var written, n int = 0, 0
+
 	// TODO: Check if we need to manually split chunks of data read
 
 	var iToRead, iLastFilePointerPosition int = 0, 0
@@ -85,7 +98,7 @@ func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 	// Loop through our changes
 	for _, fileChange := range arrFileChange {
 		// Read until change position
-		iToRead = fileChange.positionInSourceFile - iLastFilePointerPosition
+		iToRead = fileChange.PositionInSourceFile - iLastFilePointerPosition
 		buf := make([]byte, iToRead)
 		// read a chunk
 		// TODO: Check errors
@@ -94,25 +107,33 @@ func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 			break
 		}
 		// Write data up until position of change
-		if _, err := w.Write(buf[:n]); err != nil {
+		n, err = w.Write(buf[:n])
+		if err != nil {
 			break
 		}
+		written += n
 
 		// Process the add
-		if _, err := w.Write(fileChange.dataToAdd); err != nil {
+		n, err = w.Write(fileChange.DataToAdd)
+		if err != nil {
+			fmt.Println("Error in writing file (in loop)")
+			fmt.Println(err)
 			return
 		}
+		written += n
 
 		// Process the remove (skip next x bytes)
 		// For now we're "reading" bytes to move file pointer, as Seek is not supported by bufio
-		buf = make([]byte, fileChange.lengthToRemove)
+		buf = make([]byte, fileChange.LengthToRemove)
 		_, err = r.Read(buf)
 		if err != nil {
+			fmt.Println("Error in reading file")
+			fmt.Println(err)
 			return
 		}
 
 		// Update our file pointer position
-		iLastFilePointerPosition = fileChange.positionInSourceFile + fileChange.lengthToAdd
+		iLastFilePointerPosition = fileChange.PositionInSourceFile + fileChange.LengthToAdd
 	}
 
 	// Write last chunk
@@ -128,12 +149,19 @@ func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 		}
 
 		// write a chunk
-		if _, err := w.Write(buf[:n]); err != nil {
+		n, err = w.Write(buf[:n])
+		if err != nil {
+			fmt.Println("Error in writing file")
+			fmt.Println(err)
 			break
 		}
+		written += n
 	}
 
 	if err = w.Flush(); err != nil {
+		fmt.Println("Error in flushing file")
+		fmt.Println(err)
 		return
 	}
+	fmt.Printf("Wrote %d bytes!\n", written)
 }

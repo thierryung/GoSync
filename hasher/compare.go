@@ -2,18 +2,43 @@ package hasher
 
 // Represents a change between source and dest file
 type FileChange struct {
-	dataToAdd []byte
+	DataToAdd []byte
 	// TODO: Check if int is enough (overflow)
-	positionInSourceFile int
+	PositionInSourceFile int
 	// TODO: Check if int is enough (overflow)
-	lengthToAdd int
+	LengthToAdd int
 	// TODO: Check if int is enough (overflow)
-	lengthToRemove int
+	LengthToRemove int
+}
+
+func checkOutOfBounds(arr []BlockHash, num int) int {
+	if num < 0 {
+		num = 0
+	}
+	if num > len(arr) {
+		num = len(arr)
+	}
+	return num
+}
+
+func CalculateLengthBetween(b []BlockHash, start, end int) int {
+	var result int = 0
+	// Sanity check
+	if start < 0 {
+		start = 0
+	}
+	if end > len(b) {
+		end = len(b)
+	}
+	for i := start; i < end; i++ {
+		result += b[i].Length
+	}
+	return result
 }
 
 // TODO: Handle logic when change is at the very beginning or at the very end
 // TODO: Make a prettier loop (loop ending i++ j++)
-// TODO: Free array hash map (or check memory for every init)
+// TODO: Free array hash map (or check memory usage for every init)
 func CompareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 	var arrFileChange []FileChange
 	var i, j int = 0, 0
@@ -26,22 +51,22 @@ func CompareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 	for i < lenSource && j < lenDest {
 		// Logic for loop while currently checking a diff
 		if bIsCheckingDiff {
-			mapHashSource[arrHashSource[i].hash] = i
-			mapHashDest[arrHashDest[j].hash] = j
+			mapHashSource[arrHashSource[i].Hash] = i
+			mapHashDest[arrHashDest[j].Hash] = j
 
 			// Check if any past hash matches one of our current hash (see algo)
-			iPosMatchSource, okSource := mapHashSource[arrHashDest[j].hash]
-			iPosMatchDest, okDest := mapHashDest[arrHashSource[i].hash]
+			iPosMatchSource, okSource := mapHashSource[arrHashDest[j].Hash]
+			iPosMatchDest, okDest := mapHashDest[arrHashSource[i].Hash]
 			// In which case, we're now simply exchanging data (add/remove)
 			if okSource {
-				arrFileChange = append(arrFileChange, FileChange{lengthToAdd: CalculateLengthBetween(arrHashSource, iHashPosSource, iPosMatchSource), positionInSourceFile: arrHashSource[iHashPosSource].positionInFile, lengthToRemove: CalculateLengthBetween(arrHashDest, iHashPosDest, j)})
+				arrFileChange = append(arrFileChange, FileChange{LengthToAdd: CalculateLengthBetween(arrHashSource, iHashPosSource, iPosMatchSource), PositionInSourceFile: arrHashSource[iHashPosSource].PositionInFile, LengthToRemove: CalculateLengthBetween(arrHashDest, iHashPosDest, j)})
 
 				// We're done with checking diff, go back to standard loop
 				i = iPosMatchSource
 				bIsCheckingDiff = false
 
 			} else if okDest {
-				arrFileChange = append(arrFileChange, FileChange{lengthToAdd: CalculateLengthBetween(arrHashSource, iHashPosSource, i), positionInSourceFile: arrHashSource[iHashPosSource].positionInFile, lengthToRemove: CalculateLengthBetween(arrHashDest, iHashPosDest, iPosMatchDest)})
+				arrFileChange = append(arrFileChange, FileChange{LengthToAdd: CalculateLengthBetween(arrHashSource, iHashPosSource, i), PositionInSourceFile: arrHashSource[iHashPosSource].PositionInFile, LengthToRemove: CalculateLengthBetween(arrHashDest, iHashPosDest, iPosMatchDest)})
 
 				// We're done with checking diff, go back to standard loop
 				j = iPosMatchDest
@@ -55,7 +80,7 @@ func CompareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 		}
 
 		// Matching data, simply go to next
-		if arrHashSource[i].hash == arrHashDest[j].hash {
+		if arrHashSource[i].Hash == arrHashDest[j].Hash {
 			i++
 			j++
 
@@ -66,9 +91,9 @@ func CompareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 			iHashPosDest = j
 			// Initialize our map array
 			mapHashSource = make(map[[16]byte]int)
-			mapHashSource[arrHashSource[i].hash] = i
+			mapHashSource[arrHashSource[i].Hash] = i
 			mapHashDest = make(map[[16]byte]int)
-			mapHashDest[arrHashDest[j].hash] = j
+			mapHashDest[arrHashDest[j].Hash] = j
 			// And go to next
 			i++
 			j++
@@ -78,8 +103,18 @@ func CompareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 	// We're now out of the loop, was the last block different?
 	// Or do we have a hash list longer than the other?
 	if bIsCheckingDiff || lenSource != lenDest {
+		// Go back to our last step (previous loop went one step ahead)
+		i--
+		j--
+		// Double check we're not out of bounds (i.e. case of empty file on one side)
+		i = checkOutOfBounds(arrHashSource, i)
+		j = checkOutOfBounds(arrHashDest, j)
+		posSourceFile := 0
+		if i < len(arrHashSource) {
+			posSourceFile = arrHashSource[i].PositionInFile
+		}
 		// In this case, we're simply overriding data (removing old, adding new)
-		arrFileChange = append(arrFileChange, FileChange{lengthToAdd: CalculateLengthBetween(arrHashSource, i-1, len(arrHashSource)), positionInSourceFile: arrHashSource[i-1].positionInFile, lengthToRemove: CalculateLengthBetween(arrHashDest, j-1, len(arrHashDest))})
+		arrFileChange = append(arrFileChange, FileChange{LengthToAdd: CalculateLengthBetween(arrHashSource, i, len(arrHashSource)), PositionInSourceFile: posSourceFile, LengthToRemove: CalculateLengthBetween(arrHashDest, j, len(arrHashDest))})
 	}
 
 	return arrFileChange

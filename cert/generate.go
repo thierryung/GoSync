@@ -66,6 +66,12 @@ func main() {
 	// save cert
 	ioutil.WriteFile("cert.pem", cert, 0777)
 	fmt.Println("certificate saved to cert.pem")
+	// certOut, err := os.Create("cert.pem")
+	// if err != nil {
+	// log.Fatalf("failed to open cert.pem for writing: %s", err)
+	// }
+	// pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	// certOut.Close()
 
 	// these are the files save with encoding/gob style
 	privkeyfile, _ := os.Create("privategob.key")

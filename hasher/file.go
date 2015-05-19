@@ -11,19 +11,12 @@ import (
 
 // Represents a specific block, during hashing
 type BlockHash struct {
-	length         int
-	hash           [16]byte
-	positionInFile int
+	Length         int
+	Hash           [16]byte
+	PositionInFile int
 }
 
-func CalculateLengthBetween(b []BlockHash, start, end int) int {
-	var result int = 0
-	for i := start; i < end; i++ {
-		result += b[i].length
-	}
-	return result
-}
-
+// TODO: Possible optimization, the result of Pow could be cached since we always use the same #
 func HashFile(param FileHashParam) []BlockHash {
 	var c, startWindowPosition, index, cmatch, lenMin, lenMax, lenCurr int = 0, 0, 0, 0, -1, -1, -1
 	var under, _100, _200, _300, _400, _500, _plus int = 0, 0, 0, 0, 0, 0, 0
@@ -33,15 +26,19 @@ func HashFile(param FileHashParam) []BlockHash {
 	var hashBlock [16]byte
 	var arrBlockHash []BlockHash
 
-	window.init(param.WindowSize)
+	window.init(HASH_WINDOW_SIZE)
 
 	// Read file
 	f, err := os.Open(param.Filepath)
 	if err != nil {
+		fmt.Println("Err in opening file")
+		fmt.Println(err)
 		return arrBlockHash
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
+			fmt.Println("Err in closing file")
+			fmt.Println(err)
 			return
 		}
 	}()
@@ -49,18 +46,20 @@ func HashFile(param FileHashParam) []BlockHash {
 
 	// Reset the read window, we'll slide from there
 	lenCurr, err = window.readFull(reader)
-	if err != nil {
+	if err != nil && lenCurr <= 0 {
+		fmt.Println(err)
+		fmt.Println("Err in reading file")
 		return arrBlockHash
 	}
 	c += lenCurr
 	// Calculate window hash (first time)
 	for index, currByte = range window.currBytes {
-		hash += uint64(currByte) * math.Pow(param.PrimeRoot, param.WindowSize-index-1)
+		hash += uint64(currByte) * math.Pow(HASH_PRIME_ROOT, HASH_WINDOW_SIZE-index-1)
 	}
 
 	for {
 		// Check if we fit the match, and at least a certain amount of bytes
-		if (hash | param.Mask) == hash {
+		if (hash | HASH_MASK) == hash {
 			if lenMax == -1 || lenCurr > lenMax {
 				lenMax = lenCurr
 			}
@@ -87,7 +86,7 @@ func HashFile(param FileHashParam) []BlockHash {
 			// New match, md5 it
 			cmatch++
 			hashBlock = md5.Sum(window.currBlock)
-			arrBlockHash = append(arrBlockHash, BlockHash{length: lenCurr, hash: hashBlock, positionInFile: startWindowPosition})
+			arrBlockHash = append(arrBlockHash, BlockHash{Length: lenCurr, Hash: hashBlock, PositionInFile: startWindowPosition})
 
 			// Reset the read window, we'll slide from there
 			lenCurr, err = window.readFull(reader)
@@ -97,7 +96,7 @@ func HashFile(param FileHashParam) []BlockHash {
 			// Calculate next window hash
 			hash = 0
 			for index, currByte = range window.currBytes {
-				hash += uint64(currByte) * math.Pow(param.PrimeRoot, param.WindowSize-index-1)
+				hash += uint64(currByte) * math.Pow(HASH_PRIME_ROOT, HASH_WINDOW_SIZE-index-1)
 			}
 
 		} else {
@@ -108,8 +107,8 @@ func HashFile(param FileHashParam) []BlockHash {
 			}
 
 			// Magic hash
-			hash -= uint64(window.getFirstByte()) * math.Pow(param.PrimeRoot, param.WindowSize-1)
-			hash *= param.PrimeRoot
+			hash -= uint64(window.getFirstByte()) * math.Pow(HASH_PRIME_ROOT, HASH_WINDOW_SIZE-1)
+			hash *= HASH_PRIME_ROOT
 			hash += uint64(currByte)
 
 			// Add new byte read
@@ -122,7 +121,7 @@ func HashFile(param FileHashParam) []BlockHash {
 	// Last block, if not empty
 	if lenCurr > 0 {
 		hashBlock = md5.Sum(window.currBlock)
-		arrBlockHash = append(arrBlockHash, BlockHash{length: lenCurr, hash: hashBlock, positionInFile: startWindowPosition})
+		arrBlockHash = append(arrBlockHash, BlockHash{Length: lenCurr, Hash: hashBlock, PositionInFile: startWindowPosition})
 	}
 
 	fmt.Printf("Found %d matches!\n", cmatch)
