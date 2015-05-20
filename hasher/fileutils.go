@@ -61,8 +61,6 @@ func UpdateDeltaData(arrFileChange []FileChange, fileHashParamSource FileHashPar
 // 4. Do some file integrity checking
 // 5. If all goes well, remove original
 func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHashParam) {
-	var written, n int = 0, 0
-
 	// TODO: Check if we need to manually split chunks of data read
 
 	var iToRead, iLastFilePointerPosition int = 0, 0
@@ -70,6 +68,8 @@ func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 	// open input file
 	fi, err := os.Open(fileHashParamDest.Filepath)
 	if err != nil {
+		fmt.Print("Error when opening input file ")
+		fmt.Println(err)
 		return
 	}
 	// close fi on exit and check for its returned error
@@ -107,28 +107,20 @@ func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 			break
 		}
 		// Write data up until position of change
-		n, err = w.Write(buf[:n])
-		if err != nil {
+		if _, err := w.Write(buf[:n]); err != nil {
 			break
 		}
-		written += n
 
 		// Process the add
-		n, err = w.Write(fileChange.DataToAdd)
-		if err != nil {
-			fmt.Println("Error in writing file (in loop)")
-			fmt.Println(err)
+		if _, err := w.Write(fileChange.DataToAdd); err != nil {
 			return
 		}
-		written += n
 
 		// Process the remove (skip next x bytes)
 		// For now we're "reading" bytes to move file pointer, as Seek is not supported by bufio
 		buf = make([]byte, fileChange.LengthToRemove)
 		_, err = r.Read(buf)
 		if err != nil {
-			fmt.Println("Error in reading file")
-			fmt.Println(err)
 			return
 		}
 
@@ -149,19 +141,12 @@ func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 		}
 
 		// write a chunk
-		n, err = w.Write(buf[:n])
-		if err != nil {
-			fmt.Println("Error in writing file")
-			fmt.Println(err)
+		if _, err := w.Write(buf[:n]); err != nil {
 			break
 		}
-		written += n
 	}
 
 	if err = w.Flush(); err != nil {
-		fmt.Println("Error in flushing file")
-		fmt.Println(err)
 		return
 	}
-	fmt.Printf("Wrote %d bytes!\n", written)
 }

@@ -26,6 +26,11 @@ func HashFile(param FileHashParam) []BlockHash {
 	var hashBlock [16]byte
 	var arrBlockHash []BlockHash
 
+	// Check if file exists
+	if _, err := os.Stat(param.Filepath); os.IsNotExist(err) {
+		return arrBlockHash
+	}
+
 	window.init(HASH_WINDOW_SIZE)
 
 	// Read file
