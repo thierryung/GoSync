@@ -68,13 +68,13 @@ func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 	// open input file
 	fi, err := os.Open(fileHashParamDest.Filepath)
 	if err != nil {
-		fmt.Print("Error when opening input file ")
-		fmt.Println(err)
+		fmt.Println("Error when opening input file ", err)
 		return
 	}
 	// close fi on exit and check for its returned error
 	defer func() {
 		if err := fi.Close(); err != nil {
+			fmt.Println("Error when closing input file ", err)
 			return
 		}
 	}()
@@ -84,11 +84,13 @@ func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 	// open output file
 	fo, err := os.Create(fileHashParamDest.Filepath + ".tmp")
 	if err != nil {
+		fmt.Println("Error when opening output file ", err)
 		return
 	}
 	// close fo on exit and check for its returned error
 	defer func() {
 		if err := fo.Close(); err != nil {
+			fmt.Println("Error when closing output file ", err)
 			return
 		}
 	}()
@@ -108,11 +110,13 @@ func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 		}
 		// Write data up until position of change
 		if _, err := w.Write(buf[:n]); err != nil {
+			fmt.Println("Error when writing output file ", err)
 			break
 		}
 
 		// Process the add
 		if _, err := w.Write(fileChange.DataToAdd); err != nil {
+			fmt.Println("Error when writing output file (add) ", err)
 			return
 		}
 
@@ -121,6 +125,7 @@ func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 		buf = make([]byte, fileChange.LengthToRemove)
 		_, err = r.Read(buf)
 		if err != nil {
+			fmt.Println("Error when writing output file (remove) ", err)
 			return
 		}
 
@@ -134,6 +139,7 @@ func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 		// read a chunk
 		n, err := r.Read(buf)
 		if err != nil && err != io.EOF {
+			fmt.Println("Error when reading last chunk ", err)
 			break
 		}
 		if n == 0 {
@@ -142,11 +148,14 @@ func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 
 		// write a chunk
 		if _, err := w.Write(buf[:n]); err != nil {
+			fmt.Println("Error when writing last chunk ", err)
 			break
 		}
 	}
 
+	fmt.Println("Flushing file")
 	if err = w.Flush(); err != nil {
+		fmt.Println("Error when flushing file ", err)
 		return
 	}
 }

@@ -17,8 +17,9 @@ package main
 // TODO: Compress data before sending?
 // TODO: Detect moving file with couple hashes as to not transfer again
 // TODO: Create initialize struct with New***
+// TODO: No file on either end (2 tests)
+// TODO: No folder on either end (2 tests)
 // Feature: Shared Folders
-// Tests: No file on either end (2 tests)
 // Tests: Add/remove char in the beginning, middle, end, random place
 // Tests: Add/remove 2 chars in the beginning, middle, end, random place
 // Tests: Add/remove multiple chars in random places
@@ -84,6 +85,7 @@ func processUpdateFromClient(conn net.Conn, fileHashResult *FileHashResult, enco
 	fmt.Println("Do hashing")
 	var arrBlockHash []hasher.BlockHash
 	arrBlockHash = hasher.HashFile(fileHashResult.FileHashParam)
+	fmt.Println("Server hashing file: ", arrBlockHash)
 
 	// Compare two files
 	var arrFileChange []hasher.FileChange
@@ -117,7 +119,7 @@ func processPingFromClient(conn net.Conn, encoder *gob.Encoder, decoder *gob.Dec
 	// Send change from server into client
 
 	// Simulation: Hashing file on our end
-	var strFilepath string = "/home/thierry/projects/volfromserver.txt"
+	var strFilepath string = "/home/thierry/projects/testdata/volfromserver.txt"
 	var arrBlockHash []hasher.BlockHash
 	var fileHashParam hasher.FileHashParam
 	fileHashParam = hasher.FileHashParam{Filepath: strFilepath}

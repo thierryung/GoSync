@@ -36,9 +36,10 @@ func CalculateLengthBetween(b []BlockHash, start, end int) int {
 	return result
 }
 
-// TODO: Handle logic when change is at the very beginning or at the very end
 // TODO: Make a prettier loop (loop ending i++ j++)
 // TODO: Free array hash map (or check memory usage for every init)
+// CompareFileHashes will ...
+// Also checks for changes at the beginning or end of the blocks
 func CompareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 	var arrFileChange []FileChange
 	var i, j int = 0, 0
@@ -103,18 +104,12 @@ func CompareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 	// We're now out of the loop, was the last block different?
 	// Or do we have a hash list longer than the other?
 	if bIsCheckingDiff || lenSource != lenDest {
-		// Go back to our last step (previous loop went one step ahead)
-		i--
-		j--
-		// Double check we're not out of bounds (i.e. case of empty file on one side)
-		i = checkOutOfBounds(arrHashSource, i)
-		j = checkOutOfBounds(arrHashDest, j)
 		posSourceFile := 0
-		if i < len(arrHashSource) {
-			posSourceFile = arrHashSource[i].PositionInFile
+		if iHashPosSource < len(arrHashSource) {
+			posSourceFile = arrHashSource[iHashPosSource].PositionInFile
 		}
 		// In this case, we're simply overriding data (removing old, adding new)
-		arrFileChange = append(arrFileChange, FileChange{LengthToAdd: CalculateLengthBetween(arrHashSource, i, len(arrHashSource)), PositionInSourceFile: posSourceFile, LengthToRemove: CalculateLengthBetween(arrHashDest, j, len(arrHashDest))})
+		arrFileChange = append(arrFileChange, FileChange{LengthToAdd: CalculateLengthBetween(arrHashSource, iHashPosSource, len(arrHashSource)), PositionInSourceFile: posSourceFile, LengthToRemove: CalculateLengthBetween(arrHashDest, iHashPosDest, len(arrHashDest))})
 	}
 
 	return arrFileChange
