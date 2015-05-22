@@ -60,6 +60,7 @@ func UpdateDeltaData(arrFileChange []FileChange, fileHashParamSource FileHashPar
 // 3. Temp file renamed to original
 // 4. Do some file integrity checking
 // 5. If all goes well, remove original
+// TODO: Change .tmp extension to avoid possible collision (random?)
 func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHashParam) {
 	// TODO: Check if we need to manually split chunks of data read
 
@@ -156,6 +157,24 @@ func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 	fmt.Println("Flushing file")
 	if err = w.Flush(); err != nil {
 		fmt.Println("Error when flushing file ", err)
+		return
+	}
+
+	// Renaming old file
+	if err = os.Rename(fileHashParamDest.Filepath, fileHashParamDest.Filepath+".orig"); err != nil {
+		fmt.Println("Error when renaming file ", err)
+		return
+	}
+
+	// Renaming new file
+	if err = os.Rename(fileHashParamDest.Filepath+".tmp", fileHashParamDest.Filepath); err != nil {
+		fmt.Println("Error when renaming file ", err)
+		return
+	}
+
+	// Finally, if all went well, remove old original file
+	if err = os.Remove(fileHashParamDest.Filepath + ".orig"); err != nil {
+		fmt.Println("Error when removing file ", err)
 		return
 	}
 }

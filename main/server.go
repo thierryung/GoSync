@@ -41,6 +41,7 @@ import (
 	"net"
 	"os"
 	"runtime/pprof"
+	"strings"
 	"time"
 
 	"thierry/sync/hasher"
@@ -126,6 +127,7 @@ func processUpdateFromClient(client ClientConnection, fileHashResult *FileHashRe
 	hasher.UpdateDestinationFile(arrFileChange, fileHashResult.FileHashParam)
 
 	// Send update to all other clients
+	fileHashResult.UpdaterClientId = strings.Split(client.conn.RemoteAddr().String(), ":")[0]
 	chanClientChange <- fileHashResult
 }
 
@@ -178,18 +180,19 @@ func processAllClients(chanClientChange chan *FileHashResult, chanClientAdd chan
 		select {
 		// Process client changes
 		case change := <-chanClientChange:
-			fmt.Println("New change: ", change)
 			fileHashResult := prepareUpdateToClient(change)
-			for ip, client := range clients {
-				if ip != client.conn.RemoteAddr().String() {
-					fmt.Println("Sending update to client ", client.conn.RemoteAddr())
+			fmt.Println("New change: ", change)
+			fmt.Println("File hash result: ", fileHashResult)
+			for _, client := range clients {
+				if change.UpdaterClientId != strings.Split(client.conn.RemoteAddr().String(), ":")[0] {
+					fmt.Printf("Sending update to client ip %s, original client ip %s\n", client.conn.RemoteAddr(), change.UpdaterClientId)
 					go processUpdateToClient(client, &fileHashResult)
 				}
 			}
 			// Process new clients
 		case client := <-chanClientAdd:
 			fmt.Println("New client: ", client.conn.RemoteAddr())
-			clients[client.conn.RemoteAddr().String()] = client
+			clients[strings.Split(client.conn.RemoteAddr().String(), ":")[0]] = client
 			// case conn := <-rmchan:
 			// fmt.Printf("Client disconnects: %v\n", conn)
 			// delete(clients, conn)

@@ -171,6 +171,7 @@ func receiveServerChanges(conn net.Conn) {
 	if err != nil {
 		log.Fatal("Connection error from client (get file update): ", err)
 	}
+	fmt.Println("Receiving from server")
 	fmt.Println(*fileHashResult)
 
 	// We do our hashing
