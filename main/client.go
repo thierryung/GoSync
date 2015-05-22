@@ -174,7 +174,7 @@ func receiveServerChanges(conn net.Conn) {
 	fmt.Println(*fileHashResult)
 
 	// We do our hashing
-	fmt.Println("Do hashing")
+	fmt.Println("Do hashing from client")
 	var arrBlockHash []hasher.BlockHash
 	arrBlockHash = hasher.HashFile(fileHashResult.FileHashParam)
 
@@ -224,8 +224,8 @@ func connectToServer(cafile string, server string) net.Conn {
 
 func main() {
 	fmt.Println("Starting client...")
-	//connreceiver := connectToServer("../cert/capem.pem", "192.168.216.128:8080")
-	//go receiveServerChanges(connreceiver)
+	connreceiver := connectToServer("../cert/capem.pem", "192.168.216.128:8080")
+	go receiveServerChanges(connreceiver)
 	monitorLocalChanges("../cert/capem.pem", "192.168.216.128:8080")
 
 	// For now, sleep 1 second
@@ -299,4 +299,3 @@ func main() {
 	}
 	fmt.Println(string(b))
 } */
-

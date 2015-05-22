@@ -16,9 +16,13 @@ package main
 // TODO: Above logs, and errors prints, check to standardize
 // TODO: Compress data before sending?
 // TODO: Detect moving file with couple hashes as to not transfer again
-// TODO: Create initialize struct with New***
+// TODO: Create initialize (all?) struct with New***
+// TODO: Check better to declare global variables or pass through all methods (i.e. chanClientChange, chanClientAdd)
+// TODO: Check TCP connections better to reconnect, keep live, heartbeat?
 // TODO: No file on either end (2 tests)
 // TODO: No folder on either end (2 tests)
+// TODO: Properly terminate/restart connection (on client) when one end closes
+// TODO: Properly terminate/restart connection (on server) when client leaves
 // Feature: Shared Folders
 // Tests: Add/remove char in the beginning, middle, end, random place
 // Tests: Add/remove 2 chars in the beginning, middle, end, random place
@@ -42,14 +46,24 @@ import (
 	"thierry/sync/hasher"
 )
 
+// TODO: UpdaterClientId create and use to not update same originator client file
+// TODO: Update ip and use id instead (multiple users same ip)
 type FileHashResult struct {
-	FileHashParam  hasher.FileHashParam
-	ArrBlockHash   []hasher.BlockHash
-	IsClientUpdate bool
+	FileHashParam   hasher.FileHashParam
+	ArrBlockHash    []hasher.BlockHash
+	UpdaterClientId string
+	IsClientUpdate  bool
 }
 
 type FileChangeList struct {
 	ArrFileChange []hasher.FileChange
+}
+
+type ClientConnection struct {
+	id      int
+	conn    net.Conn
+	encoder *gob.Encoder
+	decoder *gob.Decoder
 }
 
 // handleConnection sends/receives data to a client's connection
@@ -57,11 +71,12 @@ type FileChangeList struct {
 // or to receive a modified file from client
 // Note: We currently don't handle multiple changes at once once
 // a single connection. They should be batched one by one.
-func handleConnection(conn net.Conn) {
+func handleConnection(conn net.Conn, chanClientChange chan *FileHashResult, chanClientAdd chan *ClientConnection) {
 	// defer conn.Close()
-	fmt.Println("Accepted a connection")
+	fmt.Println("Accepted a connection from ", conn.RemoteAddr())
 	encoder := gob.NewEncoder(conn)
 	decoder := gob.NewDecoder(conn)
+	client := ClientConnection{conn: conn, encoder: encoder, decoder: decoder}
 
 	// Check if we're receiving a client update or ping for update
 	fileHashResult := &FileHashResult{}
@@ -69,20 +84,20 @@ func handleConnection(conn net.Conn) {
 	if err != nil {
 		log.Fatal("Connection error from client (check receive/ping): ", err)
 	}
-	fmt.Println(*fileHashResult)
 
 	// Split here, we're receiving data from client
 	if fileHashResult.IsClientUpdate == true {
-		processUpdateFromClient(conn, fileHashResult, encoder, decoder)
+		processUpdateFromClient(client, fileHashResult, chanClientChange)
 	} else {
-		// Ping from client
-		processPingFromClient(conn, encoder, decoder)
+		// Add new client into our client list
+		chanClientAdd <- &client
 	}
 }
 
-func processUpdateFromClient(conn net.Conn, fileHashResult *FileHashResult, encoder *gob.Encoder, decoder *gob.Decoder) {
+func processUpdateFromClient(client ClientConnection, fileHashResult *FileHashResult, chanClientChange chan *FileHashResult) {
 	// We do our hashing
 	fmt.Println("Do hashing")
+	fmt.Println("Received from client ", *fileHashResult)
 	var arrBlockHash []hasher.BlockHash
 	arrBlockHash = hasher.HashFile(fileHashResult.FileHashParam)
 	fmt.Println("Server hashing file: ", arrBlockHash)
@@ -94,13 +109,13 @@ func processUpdateFromClient(conn net.Conn, fileHashResult *FileHashResult, enco
 	fmt.Println(arrFileChange)
 
 	// Get difference data from client
-	err := encoder.Encode(FileChangeList{ArrFileChange: arrFileChange})
+	err := client.encoder.Encode(FileChangeList{ArrFileChange: arrFileChange})
 	if err != nil {
 		log.Fatal("Connection error from client (get diff data): ", err)
 	}
 
 	// Receive updated differences from client
-	err = decoder.Decode(&arrFileChange)
+	err = client.decoder.Decode(&arrFileChange)
 	if err != nil {
 		log.Fatal("Connection error from client (received updated diff): ", err)
 	}
@@ -109,45 +124,77 @@ func processUpdateFromClient(conn net.Conn, fileHashResult *FileHashResult, enco
 
 	// Update destination file
 	hasher.UpdateDestinationFile(arrFileChange, fileHashResult.FileHashParam)
+
+	// Send update to all other clients
+	chanClientChange <- fileHashResult
 }
 
-func processPingFromClient(conn net.Conn, encoder *gob.Encoder, decoder *gob.Decoder) {
-	// We do our pinging
-	fmt.Println("Do pinging")
+func processUpdateToClient(client *ClientConnection, fileHashResult *FileHashResult) {
+	fmt.Println("Do update to client ", client.conn.RemoteAddr())
 
 	// Check what files have changed
 	// Send change from server into client
 
-	// Simulation: Hashing file on our end
-	var strFilepath string = "/home/thierry/projects/testdata/volfromserver.txt"
-	var arrBlockHash []hasher.BlockHash
-	var fileHashParam hasher.FileHashParam
-	fileHashParam = hasher.FileHashParam{Filepath: strFilepath}
-	arrBlockHash = hasher.HashFile(fileHashParam)
-	// Sending result to server for update
-	err := encoder.Encode(FileHashResult{FileHashParam: hasher.FileHashParam{Filepath: strFilepath}, ArrBlockHash: arrBlockHash})
+	// Sending result to client for update
+	err := client.encoder.Encode(fileHashResult)
 	if err != nil {
-		log.Fatal("Connection error from server (processPingFromClient/sending result): ", err)
+		log.Fatal("Connection error from server (processUpdateToClient/sending result): ", err)
 	}
 	fmt.Println("Sending to client...")
-	fmt.Println(arrBlockHash)
+	fmt.Println(fileHashResult.ArrBlockHash)
 
-	// Receive list of differences from server
+	// Receive list of differences from client
 	arrFileChange := &FileChangeList{}
-	err = decoder.Decode(arrFileChange)
+	err = client.decoder.Decode(arrFileChange)
 	if err != nil {
-		log.Fatal("Connection error from server (processPingFromClient/receiving diff): ", err)
+		log.Fatal("Connection error from server (processUpdateToClient/receiving diff): ", err)
 	}
 	fmt.Println("received from client")
 	fmt.Println(*arrFileChange)
-	hasher.UpdateDeltaData(arrFileChange.ArrFileChange, fileHashParam)
+	hasher.UpdateDeltaData(arrFileChange.ArrFileChange, fileHashResult.FileHashParam)
 	// Resending updated data
-	err = encoder.Encode(arrFileChange.ArrFileChange)
+	err = client.encoder.Encode(arrFileChange.ArrFileChange)
 	if err != nil {
-		log.Fatal("Connection error from server (processPingFromClient/resending updated data): ", err)
+		log.Fatal("Connection error from server (processUpdateToClient/resending updated data): ", err)
 	}
 	fmt.Println("Resent to client")
 	fmt.Println(*arrFileChange)
+}
+
+// prepareUpdateToClient .......
+// also pre-hashes file server side
+func prepareUpdateToClient(fileHashResult *FileHashResult) FileHashResult {
+	// Hashing file on our end
+	fileHashParam := hasher.FileHashParam{Filepath: fileHashResult.FileHashParam.Filepath}
+	arrBlockHash := hasher.HashFile(fileHashParam)
+
+	return FileHashResult{FileHashParam: fileHashParam, ArrBlockHash: arrBlockHash}
+}
+
+func processAllClients(chanClientChange chan *FileHashResult, chanClientAdd chan *ClientConnection) {
+	clients := make(map[string]*ClientConnection)
+
+	for {
+		select {
+		// Process client changes
+		case change := <-chanClientChange:
+			fmt.Println("New change: ", change)
+			fileHashResult := prepareUpdateToClient(change)
+			for ip, client := range clients {
+				if ip != client.conn.RemoteAddr().String() {
+					fmt.Println("Sending update to client ", client.conn.RemoteAddr())
+					go processUpdateToClient(client, &fileHashResult)
+				}
+			}
+			// Process new clients
+		case client := <-chanClientAdd:
+			fmt.Println("New client: ", client.conn.RemoteAddr())
+			clients[client.conn.RemoteAddr().String()] = client
+			// case conn := <-rmchan:
+			// fmt.Printf("Client disconnects: %v\n", conn)
+			// delete(clients, conn)
+		}
+	}
 }
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
@@ -201,6 +248,11 @@ func main() {
 	}
 
 	start := time.Now()
+	// Changes from originator updater client will be funneled here
+	chanClientChange := make(chan *FileHashResult)
+	// Clients to add will be funneled here
+	chanClientAdd := make(chan *ClientConnection)
+	go processAllClients(chanClientChange, chanClientAdd)
 
 	// Start the server with tls certificates
 	cert, err := tls.LoadX509KeyPair("../cert/cert2pem.pem", "../cert/key2.pem")
@@ -224,7 +276,7 @@ func main() {
 			continue
 		}
 		defer conn.Close()
-		go handleConnection(conn) // a goroutine handles conn so that the loop can accept other connections
+		go handleConnection(conn, chanClientChange, chanClientAdd) // a goroutine handles conn so that the loop can accept other connections
 	}
 
 	elapsed := time.Since(start)
