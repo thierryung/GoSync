@@ -154,8 +154,10 @@ func processUpdateToClient(client *ClientConnection, fileHashResult *FileHashRes
 	fmt.Println("received from client")
 	fmt.Println(*arrFileChange)
 	hasher.UpdateDeltaData(arrFileChange.ArrFileChange, fileHashResult.FileHashParam)
+	fmt.Println("Updated with delta")
+	fmt.Println(arrFileChange)
 	// Resending updated data
-	err = client.encoder.Encode(arrFileChange.ArrFileChange)
+	err = client.encoder.Encode(arrFileChange)
 	if err != nil {
 		log.Fatal("Connection error from server (processUpdateToClient/resending updated data): ", err)
 	}
@@ -204,39 +206,40 @@ var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 var memprofile = flag.String("memprofile", "", "write memory profile to this file")
 
 func main() {
-	/*
-	     // var strFilepath string = "/home/thierry/projects/vol1"
-	   	// var strFilepath2 string = "/home/thierry/projects/vol2"
-	   	var strFilepath1 string = "/home/thierry/projects/volclientlocal.txt"
-	   	var strFilepath2 string = "/home/thierry/projects/volserverlocal.txt"
+	/* // var strFilepath string = "/home/thierry/projects/vol1"
+	// var strFilepath2 string = "/home/thierry/projects/vol2"
+	var strFilepath1 string = "/home/thierry/projects/testdata/volclientlocal.txt"
+	var strFilepath2 string = "/home/thierry/projects/testdata/volserverlocal.txt"
 
-	   	var arrBlockHash []hasher.BlockHash
-	   	var fileHashParam hasher.FileHashParam
-	   	var arrBlockHash2 []hasher.BlockHash
-	   	var fileHashParam2 hasher.FileHashParam
-	   	var arrFileChange []hasher.FileChange
+	var arrBlockHash []hasher.BlockHash
+	var fileHashParam hasher.FileHashParam
+	var arrBlockHash2 []hasher.BlockHash
+	var fileHashParam2 hasher.FileHashParam
+	var arrFileChange []hasher.FileChange
 
-	   	// Hash file 1
-	   	fileHashParam = hasher.FileHashParam{Filepath: strFilepath1}
-	   	arrBlockHash = hasher.HashFile(fileHashParam)
+	// Hash file 1
+	fileHashParam = hasher.FileHashParam{Filepath: strFilepath1}
+	arrBlockHash = hasher.HashFile(fileHashParam)
+	fmt.Println(arrBlockHash)
 
-	   	// Hash file 2
-	   	fileHashParam2 = hasher.FileHashParam{Filepath: strFilepath2}
-	   	arrBlockHash2 = hasher.HashFile(fileHashParam2)
+	// Hash file 2
+	fileHashParam2 = hasher.FileHashParam{Filepath: strFilepath2}
+	arrBlockHash2 = hasher.HashFile(fileHashParam2)
+	fmt.Println(arrBlockHash2)
 
-	   	// Compare two files
-	   	arrFileChange = hasher.CompareFileHashes(arrBlockHash, arrBlockHash2)
-	   	fmt.Printf("We found %d changes!\n", len(arrFileChange))
-	   	fmt.Println(arrFileChange)
-	   	fmt.Println(arrFileChange[0].LengthToAdd)
+	// Compare two files
+	arrFileChange = hasher.CompareFileHashes(arrBlockHash, arrBlockHash2)
+	fmt.Printf("We found %d changes!\n", len(arrFileChange))
+	fmt.Println(arrFileChange)
+	fmt.Println(arrFileChange[0].LengthToAdd)
 
-	   	// Get difference data
-	   	hasher.UpdateDeltaData(arrFileChange, fileHashParam)
-	   	fmt.Println(arrFileChange)
+	// Get difference data
+	hasher.UpdateDeltaData(arrFileChange, fileHashParam)
+	fmt.Println(arrFileChange)
 
-	   	// Update destination file
-	   	hasher.UpdateDestinationFile(arrFileChange, fileHashParam2)
-	     os.Exit(0) */
+	// Update destination file
+	hasher.UpdateDestinationFile(arrFileChange, fileHashParam2)
+	os.Exit(0) */
 
 	fmt.Println("Starting server...")
 

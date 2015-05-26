@@ -26,6 +26,9 @@ func HashFile(param FileHashParam) []BlockHash {
 	var hashBlock [16]byte
 	var arrBlockHash []BlockHash
 
+	//
+	fmt.Println("Start hash of file ", param.Filepath)
+
 	// Check if file exists
 	if _, err := os.Stat(param.Filepath); os.IsNotExist(err) {
 		return arrBlockHash
@@ -95,7 +98,10 @@ func HashFile(param FileHashParam) []BlockHash {
 
 			// Reset the read window, we'll slide from there
 			lenCurr, err = window.readFull(reader)
-			// TODO: Check error here? Since readFull can return error
+			if err != nil && lenCurr <= 0 {
+				fmt.Println("Error in hashfile", err)
+				break
+			}
 			startWindowPosition = c
 			c += lenCurr
 			// Calculate next window hash
@@ -108,6 +114,7 @@ func HashFile(param FileHashParam) []BlockHash {
 			// No fit, we keep going for this block
 			currByte, err = reader.ReadByte()
 			if err != nil {
+				fmt.Println("Error in hashfile2", err)
 				break
 			}
 

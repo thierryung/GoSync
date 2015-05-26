@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/fsnotify.v1"
@@ -58,16 +59,20 @@ func monitorLocalChanges(cafile string, server string) {
 						}
 					} else {
 						fmt.Println("Detected new file %s", event.Name)
-						watcher.Files <- event.Name // created a file
+						// watcher.Files <- event.Name // created a file
+						// Commented out since we don't read from new file
 					}
 
 				case event.Op&fsnotify.Write == fsnotify.Write:
 					// modified a file, assuming that you don't modify folders
 					fmt.Println("Detected file modification %s", event.Name)
-					watcher.Files <- event.Name
-					log.Println("Modified file: ", event.Name)
-					connsender := connectToServer(cafile, server)
-					go sendClientChanges(connsender, event.Name)
+					// TODO: Remove, but for now don't handle .tmp files
+					if strings.Index(event.Name, ".tmp") == -1 {
+						watcher.Files <- event.Name
+						log.Println("Modified file: ", event.Name)
+						connsender := connectToServer(cafile, server)
+						go sendClientChanges(connsender, event.Name)
+					}
 				case event.Op&fsnotify.Remove == fsnotify.Remove:
 					log.Println("Removed file: ", event.Name)
 				case event.Op&fsnotify.Rename == fsnotify.Rename:
@@ -84,38 +89,6 @@ func monitorLocalChanges(cafile string, server string) {
 		}
 
 	}()
-
-	/*
-	   	go func() {
-	   		for {
-	   			select {
-	   			case event := <-watcher.Events:
-	   				switch {
-	   				case event.Op&fsnotify.Write == fsnotify.Write:
-	   					log.Println("Modified file: ", event.Name)
-	             connsender := connectToServer(cafile, server)
-	             go sendClientChanges(connsender, event.Name)
-	   				case event.Op&fsnotify.Create == fsnotify.Create:
-	   					log.Println("Created file: ", event.Name)
-	   				case event.Op&fsnotify.Remove == fsnotify.Remove:
-	   					log.Println("Removed file: ", event.Name)
-	   				case event.Op&fsnotify.Rename == fsnotify.Rename:
-	   					log.Println("Renamed file: ", event.Name)
-	   				case event.Op&fsnotify.Chmod == fsnotify.Chmod:
-	   					log.Println("File changed permission: ", event.Name)
-	   				}
-	   			case err := <-watcher.Errors:
-	           log.Println("Watcher watching error : ", err)
-	           _done <- true
-	           done <- true
-	   			}
-	   		}
-	   	}()
-
-	   	err = watcher.Add("/home/thierry/projects/testdata/")
-	   	if err != nil {
-	       log.Println("Watcher add error : ", err)
-	   	} */
 
 	<-_done
 }
@@ -164,43 +137,47 @@ func receiveServerChanges(conn net.Conn) {
 	}
 
 	decoder := gob.NewDecoder(conn)
-
-	// Get file update
 	fileHashResult := &FileHashResult{}
-	err = decoder.Decode(fileHashResult)
-	if err != nil {
-		log.Fatal("Connection error from client (get file update): ", err)
+
+	for {
+		// Get file update
+		err = decoder.Decode(fileHashResult)
+		if err != nil {
+			log.Fatal("Connection error from client (get file update): ", err)
+		}
+		fmt.Println("Receiving from server")
+		fmt.Println(*fileHashResult)
+
+		// We do our hashing
+		fmt.Println("Do hashing from client")
+		var arrBlockHash []hasher.BlockHash
+		arrBlockHash = hasher.HashFile(fileHashResult.FileHashParam)
+		fmt.Println(arrBlockHash)
+
+		// Compare two files
+		var arrFileChange []hasher.FileChange
+		arrFileChange = hasher.CompareFileHashes(fileHashResult.ArrBlockHash, arrBlockHash)
+		fmt.Printf("We found %d changes!\n", len(arrFileChange))
+		fmt.Println(arrFileChange)
+
+		// Send difference data from client
+		err = encoder.Encode(FileChangeList{ArrFileChange: arrFileChange})
+		if err != nil {
+			log.Fatal("Connection error from client (get diff data): ", err)
+		}
+
+		// Receive updated differences from server
+		arrFileChangeList := &FileChangeList{}
+		err = decoder.Decode(arrFileChangeList)
+		if err != nil {
+			log.Fatal("Connection error from client (received updated diff): ", err)
+		}
+		fmt.Println("decoded")
+		fmt.Println(arrFileChangeList)
+
+		// Update destination file
+		hasher.UpdateDestinationFile(arrFileChangeList.ArrFileChange, fileHashResult.FileHashParam)
 	}
-	fmt.Println("Receiving from server")
-	fmt.Println(*fileHashResult)
-
-	// We do our hashing
-	fmt.Println("Do hashing from client")
-	var arrBlockHash []hasher.BlockHash
-	arrBlockHash = hasher.HashFile(fileHashResult.FileHashParam)
-
-	// Compare two files
-	var arrFileChange []hasher.FileChange
-	arrFileChange = hasher.CompareFileHashes(fileHashResult.ArrBlockHash, arrBlockHash)
-	fmt.Printf("We found %d changes!\n", len(arrFileChange))
-	fmt.Println(arrFileChange)
-
-	// Get difference data from client
-	err = encoder.Encode(FileChangeList{ArrFileChange: arrFileChange})
-	if err != nil {
-		log.Fatal("Connection error from client (get diff data): ", err)
-	}
-
-	// Receive updated differences from client
-	err = decoder.Decode(&arrFileChange)
-	if err != nil {
-		log.Fatal("Connection error from client (received updated diff): ", err)
-	}
-	fmt.Println("decoded")
-	fmt.Println(arrFileChange)
-
-	// Update destination file
-	hasher.UpdateDestinationFile(arrFileChange, fileHashResult.FileHashParam)
 }
 
 func connectToServer(cafile string, server string) net.Conn {
@@ -225,7 +202,7 @@ func connectToServer(cafile string, server string) net.Conn {
 
 func main() {
 	fmt.Println("Starting client...")
-	connreceiver := connectToServer("../cert/capem.pem", "192.168.216.128:8080")
+	connreceiver := connectToServer("capem.pem", "192.168.216.128:8080")
 	go receiveServerChanges(connreceiver)
 	monitorLocalChanges("../cert/capem.pem", "192.168.216.128:8080")
 
@@ -234,69 +211,7 @@ func main() {
 	// until we have a file change locally to send to server
 	time.Sleep(1000 * time.Millisecond)
 
-	/*
-		  go clientreceiver(conn)
-			encoder := gob.NewEncoder(conn)
-			p := P{"testttt"}
-			fmt.Println(p)
-			encoder.Encode(p)
-			time.Sleep(1000 * time.Millisecond)
-			p = P{"testttt2"}
-			fmt.Println(p)
-			encoder.Encode(p)
-			encoder.Encode(p)
-			encoder.Encode(p)
-
-		  for {
-		  }
-
-			// Receive from server into client
-			dec := gob.NewDecoder(conn)
-			p2 := &P{}
-			for dec.Decode(p2) == nil {
-				fmt.Println(*p2)
-			}
-	*/
 	//conn.Close()
 	<-done
 	fmt.Println("done")
 }
-
-/* package main
-
-import (
-	"crypto/tls"
-	"crypto/x509"
-	"fmt"
-	"io/ioutil"
-	"log"
-	"net/http"
-)
-
-func main() {
-	b, err := ioutil.ReadFile("../cert/cert2.pem")
-	if err != nil {
-		log.Fatal(err)
-	}
-	pool := x509.NewCertPool()
-	if ok := pool.AppendCertsFromPEM(b); !ok {
-		log.Fatal("failed to append cert")
-	}
-	tc := &tls.Config{RootCAs: pool}
-	tr := &http.Transport{TLSClientConfig: tc}
-	client := &http.Client{Transport: tr}
-	req, err := http.NewRequest("GET", "https://127.0.0.1:8080", nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Fatal(err)
-	}
-	b, err = ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(string(b))
-} */
