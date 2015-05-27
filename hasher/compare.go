@@ -114,4 +114,3 @@ func CompareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 
 	return arrFileChange
 }
-

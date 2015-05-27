@@ -17,7 +17,7 @@ type BlockHash struct {
 }
 
 // TODO: Possible optimization, the result of Pow could be cached since we always use the same #
-func HashFile(param FileHashParam) []BlockHash {
+func HashFile(strFilepath string) []BlockHash {
 	var c, startWindowPosition, index, cmatch, lenMin, lenMax, lenCurr int = 0, 0, 0, 0, -1, -1, -1
 	var under, _100, _200, _300, _400, _500, _plus int = 0, 0, 0, 0, 0, 0, 0
 	var hash uint64 = 0
@@ -27,17 +27,17 @@ func HashFile(param FileHashParam) []BlockHash {
 	var arrBlockHash []BlockHash
 
 	//
-	fmt.Println("Start hash of file ", param.Filepath)
+	fmt.Println("Start hash of file ", strFilepath)
 
 	// Check if file exists
-	if _, err := os.Stat(param.Filepath); os.IsNotExist(err) {
+	if _, err := os.Stat(strFilepath); os.IsNotExist(err) {
 		return arrBlockHash
 	}
 
 	window.init(HASH_WINDOW_SIZE)
 
 	// Read file
-	f, err := os.Open(param.Filepath)
+	f, err := os.Open(strFilepath)
 	if err != nil {
 		fmt.Println("Err in opening file")
 		fmt.Println(err)

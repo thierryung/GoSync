@@ -26,6 +26,7 @@ package main
 // Feature: Shared Folders
 // Tests: Add/remove char in the beginning, middle, end, random place
 // Tests: Add/remove 2 chars in the beginning, middle, end, random place
+// Tests: Same files
 // Tests: Add/remove multiple chars in random places
 // Tests: Unit tests!
 
@@ -38,6 +39,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/gob"
+	"encoding/json"
 	"net"
 	"os"
 	"runtime/pprof"
@@ -47,13 +49,15 @@ import (
 	"thierry/sync/hasher"
 )
 
+var configuration Configuration
+
 // TODO: UpdaterClientId create and use to not update same originator client file
 // TODO: Update ip and use id instead (multiple users same ip)
 type FileHashResult struct {
-	FileHashParam   hasher.FileHashParam
-	ArrBlockHash    []hasher.BlockHash
-	UpdaterClientId string
-	IsClientUpdate  bool
+	StrRelativeFilepath string
+	UpdaterClientId     string
+	ArrBlockHash        []hasher.BlockHash
+	IsClientUpdate      bool
 }
 
 type FileChangeList struct {
@@ -65,6 +69,10 @@ type ClientConnection struct {
 	conn    net.Conn
 	encoder *gob.Encoder
 	decoder *gob.Decoder
+}
+
+type Configuration struct {
+	RootDir string
 }
 
 // handleConnection sends/receives data to a client's connection
@@ -96,11 +104,13 @@ func handleConnection(conn net.Conn, chanClientChange chan *FileHashResult, chan
 }
 
 func processUpdateFromClient(client ClientConnection, fileHashResult *FileHashResult, chanClientChange chan *FileHashResult) {
+	strAbsoluteFilepath := configuration.RootDir + fileHashResult.StrRelativeFilepath
+
 	// We do our hashing
-	fmt.Println("Do hashing")
+	fmt.Println("Do hashing of file", strAbsoluteFilepath)
 	fmt.Println("Received from client ", *fileHashResult)
 	var arrBlockHash []hasher.BlockHash
-	arrBlockHash = hasher.HashFile(fileHashResult.FileHashParam)
+	arrBlockHash = hasher.HashFile(strAbsoluteFilepath)
 	fmt.Println("Server hashing file: ", arrBlockHash)
 
 	// Compare two files
@@ -124,7 +134,7 @@ func processUpdateFromClient(client ClientConnection, fileHashResult *FileHashRe
 	fmt.Println(arrFileChange)
 
 	// Update destination file
-	hasher.UpdateDestinationFile(arrFileChange, fileHashResult.FileHashParam)
+	hasher.UpdateDestinationFile(arrFileChange, strAbsoluteFilepath)
 
 	// Send update to all other clients
 	fileHashResult.UpdaterClientId = strings.Split(client.conn.RemoteAddr().String(), ":")[0]
@@ -133,8 +143,8 @@ func processUpdateFromClient(client ClientConnection, fileHashResult *FileHashRe
 
 func processUpdateToClient(client *ClientConnection, fileHashResult *FileHashResult) {
 	fmt.Println("Do update to client ", client.conn.RemoteAddr())
+	strAbsoluteFilepath := configuration.RootDir + fileHashResult.StrRelativeFilepath
 
-	// Check what files have changed
 	// Send change from server into client
 
 	// Sending result to client for update
@@ -153,7 +163,7 @@ func processUpdateToClient(client *ClientConnection, fileHashResult *FileHashRes
 	}
 	fmt.Println("received from client")
 	fmt.Println(*arrFileChange)
-	hasher.UpdateDeltaData(arrFileChange.ArrFileChange, fileHashResult.FileHashParam)
+	hasher.UpdateDeltaData(arrFileChange.ArrFileChange, strAbsoluteFilepath)
 	fmt.Println("Updated with delta")
 	fmt.Println(arrFileChange)
 	// Resending updated data
@@ -169,10 +179,10 @@ func processUpdateToClient(client *ClientConnection, fileHashResult *FileHashRes
 // also pre-hashes file server side
 func prepareUpdateToClient(fileHashResult *FileHashResult) FileHashResult {
 	// Hashing file on our end
-	fileHashParam := hasher.FileHashParam{Filepath: fileHashResult.FileHashParam.Filepath}
-	arrBlockHash := hasher.HashFile(fileHashParam)
+	strAbsoluteFilepath := configuration.RootDir + fileHashResult.StrRelativeFilepath
+	arrBlockHash := hasher.HashFile(strAbsoluteFilepath)
 
-	return FileHashResult{FileHashParam: fileHashParam, ArrBlockHash: arrBlockHash}
+	return FileHashResult{StrRelativeFilepath: fileHashResult.StrRelativeFilepath, ArrBlockHash: arrBlockHash}
 }
 
 func processAllClients(chanClientChange chan *FileHashResult, chanClientAdd chan *ClientConnection) {
@@ -195,6 +205,7 @@ func processAllClients(chanClientChange chan *FileHashResult, chanClientAdd chan
 		case client := <-chanClientAdd:
 			fmt.Println("New client: ", client.conn.RemoteAddr())
 			clients[strings.Split(client.conn.RemoteAddr().String(), ":")[0]] = client
+			// TODO: When clients logs off
 			// case conn := <-rmchan:
 			// fmt.Printf("Client disconnects: %v\n", conn)
 			// delete(clients, conn)
@@ -206,39 +217,46 @@ var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 var memprofile = flag.String("memprofile", "", "write memory profile to this file")
 
 func main() {
+
+	file, err := os.Open("conf.json")
+	if err != nil {
+		log.Fatal("Could not load config file")
+	}
+	decoder := json.NewDecoder(file)
+	err = decoder.Decode(&configuration)
+	if err != nil {
+		fmt.Println("error loading config:", err)
+	}
+	fmt.Println("Root dir setup:", configuration.RootDir)
+
 	/* // var strFilepath string = "/home/thierry/projects/vol1"
 	// var strFilepath2 string = "/home/thierry/projects/vol2"
-	var strFilepath1 string = "/home/thierry/projects/testdata/volclientlocal.txt"
-	var strFilepath2 string = "/home/thierry/projects/testdata/volserverlocal.txt"
+	var strFilepath1 string = "volclientlocal.txt"
+	var strFilepath2 string = "volserverlocal.txt"
 
 	var arrBlockHash []hasher.BlockHash
-	var fileHashParam hasher.FileHashParam
 	var arrBlockHash2 []hasher.BlockHash
-	var fileHashParam2 hasher.FileHashParam
 	var arrFileChange []hasher.FileChange
 
 	// Hash file 1
-	fileHashParam = hasher.FileHashParam{Filepath: strFilepath1}
-	arrBlockHash = hasher.HashFile(fileHashParam)
+	arrBlockHash = hasher.HashFile(configuration.RootDir + strFilepath1)
 	fmt.Println(arrBlockHash)
 
 	// Hash file 2
-	fileHashParam2 = hasher.FileHashParam{Filepath: strFilepath2}
-	arrBlockHash2 = hasher.HashFile(fileHashParam2)
+	arrBlockHash2 = hasher.HashFile(configuration.RootDir + strFilepath2)
 	fmt.Println(arrBlockHash2)
 
 	// Compare two files
 	arrFileChange = hasher.CompareFileHashes(arrBlockHash, arrBlockHash2)
 	fmt.Printf("We found %d changes!\n", len(arrFileChange))
 	fmt.Println(arrFileChange)
-	fmt.Println(arrFileChange[0].LengthToAdd)
 
 	// Get difference data
-	hasher.UpdateDeltaData(arrFileChange, fileHashParam)
+	hasher.UpdateDeltaData(arrFileChange, configuration.RootDir + strFilepath1)
 	fmt.Println(arrFileChange)
 
 	// Update destination file
-	hasher.UpdateDestinationFile(arrFileChange, fileHashParam2)
+	hasher.UpdateDestinationFile(arrFileChange, configuration.RootDir + strFilepath2)
 	os.Exit(0) */
 
 	fmt.Println("Starting server...")

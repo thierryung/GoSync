@@ -1,0 +1,5 @@
+{
+  "RootDir": "/home/thierry/projects/testdata/",
+  "CertFilepath": "../cert/capem.pem",
+  "ServerIp": "192.168.216.128:8080"
+}

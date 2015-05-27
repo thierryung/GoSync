@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -19,22 +20,29 @@ import (
 )
 
 var done chan bool = make(chan bool)
+var configuration Configuration
 
 type FileHashResult struct {
-	FileHashParam  hasher.FileHashParam
-	ArrBlockHash   []hasher.BlockHash
-	IsClientUpdate bool
+	StrRelativeFilepath string
+	ArrBlockHash        []hasher.BlockHash
+	UpdaterClientId     string
+	IsClientUpdate      bool
 }
 
 type FileChangeList struct {
 	ArrFileChange []hasher.FileChange
 }
 
-// monitorLocalChanges will wait for io changes
-// and send data to server
-func monitorLocalChanges(cafile string, server string) {
-	fmt.Println("*** Recursively monitoring folder")
-	watcher, err := watch.NewRecursiveWatcher("/home/thierry/projects/testdata/")
+type Configuration struct {
+	RootDir      string
+	CertFilepath string
+	ServerIp     string
+}
+
+// monitorLocalChanges will wait for io changes......
+func monitorLocalChanges(rootdir string, cafile string, server string) {
+	fmt.Println("*** Recursively monitoring folder", rootdir)
+	watcher, err := watch.NewRecursiveWatcher(rootdir)
 	if err != nil {
 		log.Println("Watcher create error : ", err)
 	}
@@ -67,7 +75,7 @@ func monitorLocalChanges(cafile string, server string) {
 					// modified a file, assuming that you don't modify folders
 					fmt.Println("Detected file modification %s", event.Name)
 					// TODO: Remove, but for now don't handle .tmp files
-					if strings.Index(event.Name, ".tmp") == -1 {
+					if strings.Index(event.Name, ".tmp") == -1 && strings.Index(event.Name, ".swp") == -1 {
 						watcher.Files <- event.Name
 						log.Println("Modified file: ", event.Name)
 						connsender := connectToServer(cafile, server)
@@ -93,16 +101,21 @@ func monitorLocalChanges(cafile string, server string) {
 	<-_done
 }
 
-func sendClientChanges(conn net.Conn, strFilepath string) {
+func sendClientChanges(conn net.Conn, strAbsoluteFilepath string) {
+	// Here locally, we always work with absolute path, unless we're sending them to server
+	strRelativeFilepath, err := filepath.Rel(configuration.RootDir, strAbsoluteFilepath)
+	fmt.Println("Updated file:", strRelativeFilepath)
+	// if err != nil {
+	// log.Fatal("Could not resolve relative path of ", configuration.RootDir, strAbsoluteFilepath, err)
+	// }
+
 	defer conn.Close()
 	// Hashing file on our end
 	var arrBlockHash []hasher.BlockHash
-	var fileHashParam hasher.FileHashParam
-	fileHashParam = hasher.FileHashParam{Filepath: strFilepath}
-	arrBlockHash = hasher.HashFile(fileHashParam)
+	arrBlockHash = hasher.HashFile(strAbsoluteFilepath)
 	// Sending result to server for update
 	encoder := gob.NewEncoder(conn)
-	err := encoder.Encode(FileHashResult{FileHashParam: hasher.FileHashParam{Filepath: strFilepath}, ArrBlockHash: arrBlockHash, IsClientUpdate: true})
+	err = encoder.Encode(FileHashResult{StrRelativeFilepath: strRelativeFilepath, ArrBlockHash: arrBlockHash, IsClientUpdate: true})
 	if err != nil {
 		log.Fatal("Connection error from client (sendclientchanges/sending result): ", err)
 	}
@@ -118,7 +131,7 @@ func sendClientChanges(conn net.Conn, strFilepath string) {
 	}
 	fmt.Println("received from server")
 	fmt.Println(*arrFileChange)
-	hasher.UpdateDeltaData(arrFileChange.ArrFileChange, fileHashParam)
+	hasher.UpdateDeltaData(arrFileChange.ArrFileChange, strAbsoluteFilepath)
 	// Resending updated data
 	err = encoder.Encode(arrFileChange.ArrFileChange)
 	if err != nil {
@@ -148,10 +161,12 @@ func receiveServerChanges(conn net.Conn) {
 		fmt.Println("Receiving from server")
 		fmt.Println(*fileHashResult)
 
+		strAbsoluteFilepath := configuration.RootDir + fileHashResult.StrRelativeFilepath
+
 		// We do our hashing
 		fmt.Println("Do hashing from client")
 		var arrBlockHash []hasher.BlockHash
-		arrBlockHash = hasher.HashFile(fileHashResult.FileHashParam)
+		arrBlockHash = hasher.HashFile(strAbsoluteFilepath)
 		fmt.Println(arrBlockHash)
 
 		// Compare two files
@@ -176,7 +191,7 @@ func receiveServerChanges(conn net.Conn) {
 		fmt.Println(arrFileChangeList)
 
 		// Update destination file
-		hasher.UpdateDestinationFile(arrFileChangeList.ArrFileChange, fileHashResult.FileHashParam)
+		hasher.UpdateDestinationFile(arrFileChangeList.ArrFileChange, strAbsoluteFilepath)
 	}
 }
 
@@ -202,9 +217,21 @@ func connectToServer(cafile string, server string) net.Conn {
 
 func main() {
 	fmt.Println("Starting client...")
-	connreceiver := connectToServer("capem.pem", "192.168.216.128:8080")
+
+	file, err := os.Open("conf.json")
+	if err != nil {
+		log.Fatal("Could not load config file")
+	}
+	decoder := json.NewDecoder(file)
+	err = decoder.Decode(&configuration)
+	if err != nil {
+		fmt.Println("error loading config:", err)
+	}
+	fmt.Println("Root dir setup:", configuration.RootDir)
+
+	connreceiver := connectToServer(configuration.CertFilepath, configuration.ServerIp)
 	go receiveServerChanges(connreceiver)
-	monitorLocalChanges("../cert/capem.pem", "192.168.216.128:8080")
+	monitorLocalChanges(configuration.RootDir, configuration.CertFilepath, configuration.ServerIp)
 
 	// For now, sleep 1 second
 	// What we really want to do is to block (channel?)

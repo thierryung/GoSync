@@ -18,14 +18,8 @@ const (
 	HASH_MASK        uint64 = (1 << 2) - 1
 )
 
-// Convenient container with params for a file hash
-// TODO: Check if now container is necessary
-type FileHashParam struct {
-	Filepath string
-}
-
-func UpdateDeltaData(arrFileChange []FileChange, fileHashParamSource FileHashParam) {
-	f, err := os.Open(fileHashParamSource.Filepath)
+func UpdateDeltaData(arrFileChange []FileChange, strFilepath string) {
+	f, err := os.Open(strFilepath)
 	if err != nil {
 		return
 	}
@@ -61,13 +55,13 @@ func UpdateDeltaData(arrFileChange []FileChange, fileHashParamSource FileHashPar
 // 4. Do some file integrity checking
 // 5. If all goes well, remove original
 // TODO: Change .tmp extension to avoid possible collision (random?)
-func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHashParam) {
+func UpdateDestinationFile(arrFileChange []FileChange, strFilepath string) {
 	// TODO: Check if we need to manually split chunks of data read
 
 	var iToRead, iLastFilePointerPosition int = 0, 0
 
 	// open input file
-	fi, err := os.Open(fileHashParamDest.Filepath)
+	fi, err := os.Open(strFilepath)
 	if err != nil {
 		fmt.Println("Error when opening input file ", err)
 		return
@@ -83,7 +77,7 @@ func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 	r := bufio.NewReader(fi)
 
 	// open output file
-	fo, err := os.Create(fileHashParamDest.Filepath + ".tmp")
+	fo, err := os.Create(strFilepath + ".tmp")
 	if err != nil {
 		fmt.Println("Error when opening output file ", err)
 		return
@@ -160,20 +154,30 @@ func UpdateDestinationFile(arrFileChange []FileChange, fileHashParamDest FileHas
 		return
 	}
 
+	if err := fi.Close(); err != nil {
+		fmt.Println("Error when closing input file ", err)
+		return
+	}
+
+	if err := fo.Close(); err != nil {
+		fmt.Println("Error when closing output file ", err)
+		return
+	}
+
 	// Renaming old file
-	if err = os.Rename(fileHashParamDest.Filepath, fileHashParamDest.Filepath+".orig"); err != nil {
+	if err = os.Rename(strFilepath, strFilepath+".orig"); err != nil {
 		fmt.Println("Error when renaming file ", err)
 		return
 	}
 
 	// Renaming new file
-	if err = os.Rename(fileHashParamDest.Filepath+".tmp", fileHashParamDest.Filepath); err != nil {
+	if err = os.Rename(strFilepath+".tmp", strFilepath); err != nil {
 		fmt.Println("Error when renaming file ", err)
 		return
 	}
 
 	// Finally, if all went well, remove old original file
-	if err = os.Remove(fileHashParamDest.Filepath + ".orig"); err != nil {
+	if err = os.Remove(strFilepath + ".orig"); err != nil {
 		fmt.Println("Error when removing file ", err)
 		return
 	}
