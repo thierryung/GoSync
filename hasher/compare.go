@@ -81,6 +81,8 @@ func CompareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 		}
 
 		// Matching data, simply go to next
+		iHashPosSource = i
+		iHashPosDest = j
 		if arrHashSource[i].Hash == arrHashDest[j].Hash {
 			i++
 			j++
@@ -88,8 +90,6 @@ func CompareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 		} else {
 			// Non matching data, remember current state
 			bIsCheckingDiff = true
-			iHashPosSource = i
-			iHashPosDest = j
 			// Initialize our map array
 			mapHashSource = make(map[[16]byte]int)
 			mapHashSource[arrHashSource[i].Hash] = i
@@ -114,3 +114,4 @@ func CompareFileHashes(arrHashSource, arrHashDest []BlockHash) []FileChange {
 
 	return arrFileChange
 }
+
