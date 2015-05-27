@@ -66,13 +66,6 @@ func UpdateDestinationFile(arrFileChange []FileChange, strFilepath string) {
 		fmt.Println("Error when opening input file ", err)
 		return
 	}
-	// close fi on exit and check for its returned error
-	defer func() {
-		if err := fi.Close(); err != nil {
-			fmt.Println("Error when closing input file ", err)
-			return
-		}
-	}()
 	// make a read buffer
 	r := bufio.NewReader(fi)
 
@@ -82,13 +75,6 @@ func UpdateDestinationFile(arrFileChange []FileChange, strFilepath string) {
 		fmt.Println("Error when opening output file ", err)
 		return
 	}
-	// close fo on exit and check for its returned error
-	defer func() {
-		if err := fo.Close(); err != nil {
-			fmt.Println("Error when closing output file ", err)
-			return
-		}
-	}()
 	// make a write buffer
 	w := bufio.NewWriter(fo)
 

@@ -76,7 +76,7 @@ func monitorLocalChanges(rootdir string, cafile string, server string) {
 					fmt.Println("Detected file modification %s", event.Name)
 					// TODO: Remove, but for now don't handle .tmp files
 					if strings.Index(event.Name, ".tmp") == -1 && strings.Index(event.Name, ".swp") == -1 {
-						watcher.Files <- event.Name
+						// watcher.Files <- event.Name
 						log.Println("Modified file: ", event.Name)
 						connsender := connectToServer(cafile, server)
 						go sendClientChanges(connsender, event.Name)
@@ -114,13 +114,13 @@ func sendClientChanges(conn net.Conn, strAbsoluteFilepath string) {
 	var arrBlockHash []hasher.BlockHash
 	arrBlockHash = hasher.HashFile(strAbsoluteFilepath)
 	// Sending result to server for update
+	fmt.Println("1. Sending to server...")
+	fmt.Println(arrBlockHash)
 	encoder := gob.NewEncoder(conn)
 	err = encoder.Encode(FileHashResult{StrRelativeFilepath: strRelativeFilepath, ArrBlockHash: arrBlockHash, IsClientUpdate: true})
 	if err != nil {
 		log.Fatal("Connection error from client (sendclientchanges/sending result): ", err)
 	}
-	fmt.Println("Sending to server...")
-	fmt.Println(arrBlockHash)
 
 	// Receive list of differences from server
 	arrFileChange := &FileChangeList{}
@@ -129,7 +129,7 @@ func sendClientChanges(conn net.Conn, strAbsoluteFilepath string) {
 	if err != nil {
 		log.Fatal("Connection error from client (sendclientchanges/receiving diff): ", err)
 	}
-	fmt.Println("received from server")
+	fmt.Println("3. received from server")
 	fmt.Println(*arrFileChange)
 	hasher.UpdateDeltaData(arrFileChange.ArrFileChange, strAbsoluteFilepath)
 	// Resending updated data
@@ -137,7 +137,7 @@ func sendClientChanges(conn net.Conn, strAbsoluteFilepath string) {
 	if err != nil {
 		log.Fatal("Connection error from client (sendclientchanges/resending updated data): ", err)
 	}
-	fmt.Println("Resent to server")
+	fmt.Println("4. Resent to server")
 	fmt.Println(*arrFileChange)
 }
 
@@ -153,12 +153,12 @@ func receiveServerChanges(conn net.Conn) {
 	fileHashResult := &FileHashResult{}
 
 	for {
-		// Get file update
+		// 2. Get file update
 		err = decoder.Decode(fileHashResult)
 		if err != nil {
 			log.Fatal("Connection error from client (get file update): ", err)
 		}
-		fmt.Println("Receiving from server")
+		fmt.Println("2. Receiving from server")
 		fmt.Println(*fileHashResult)
 
 		strAbsoluteFilepath := configuration.RootDir + fileHashResult.StrRelativeFilepath
@@ -173,21 +173,21 @@ func receiveServerChanges(conn net.Conn) {
 		var arrFileChange []hasher.FileChange
 		arrFileChange = hasher.CompareFileHashes(fileHashResult.ArrBlockHash, arrBlockHash)
 		fmt.Printf("We found %d changes!\n", len(arrFileChange))
-		fmt.Println(arrFileChange)
 
-		// Send difference data from client
+		// 3. Send difference data from client
+		fmt.Println("3. Sending arrFileChange", arrFileChange)
 		err = encoder.Encode(FileChangeList{ArrFileChange: arrFileChange})
 		if err != nil {
 			log.Fatal("Connection error from client (get diff data): ", err)
 		}
 
-		// Receive updated differences from server
+		// 6. Receive updated differences from server
 		arrFileChangeList := &FileChangeList{}
 		err = decoder.Decode(arrFileChangeList)
 		if err != nil {
 			log.Fatal("Connection error from client (received updated diff): ", err)
 		}
-		fmt.Println("decoded")
+		fmt.Println("6. decoded")
 		fmt.Println(arrFileChangeList)
 
 		// Update destination file

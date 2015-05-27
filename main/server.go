@@ -66,6 +66,7 @@ type FileChangeList struct {
 
 type ClientConnection struct {
 	id      int
+	isInUse bool
 	conn    net.Conn
 	encoder *gob.Encoder
 	decoder *gob.Decoder
@@ -117,21 +118,21 @@ func processUpdateFromClient(client ClientConnection, fileHashResult *FileHashRe
 	var arrFileChange []hasher.FileChange
 	arrFileChange = hasher.CompareFileHashes(fileHashResult.ArrBlockHash, arrBlockHash)
 	fmt.Printf("We found %d changes!\n", len(arrFileChange))
-	fmt.Println(arrFileChange)
 
 	// Get difference data from client
+	fmt.Println("2. Sending arrFileChange", arrFileChange)
 	err := client.encoder.Encode(FileChangeList{ArrFileChange: arrFileChange})
 	if err != nil {
-		log.Fatal("Connection error from client (get diff data): ", err)
+		log.Fatal("Connection error from client (get diff data): ", err, client.conn.RemoteAddr())
 	}
 
 	// Receive updated differences from client
 	err = client.decoder.Decode(&arrFileChange)
-	if err != nil {
-		log.Fatal("Connection error from client (received updated diff): ", err)
-	}
-	fmt.Println("decoded")
+	fmt.Println("5. decoded")
 	fmt.Println(arrFileChange)
+	if err != nil {
+		log.Fatal("Connection error from client (received updated diff): ", err, client.conn.RemoteAddr())
+	}
 
 	// Update destination file
 	hasher.UpdateDestinationFile(arrFileChange, strAbsoluteFilepath)
@@ -142,37 +143,46 @@ func processUpdateFromClient(client ClientConnection, fileHashResult *FileHashRe
 }
 
 func processUpdateToClient(client *ClientConnection, fileHashResult *FileHashResult) {
+	// Mark as in use
+	if client.isInUse {
+		fmt.Println("Client currently in use", client.conn.RemoteAddr())
+		return
+	}
+	client.isInUse = true
 	fmt.Println("Do update to client ", client.conn.RemoteAddr())
 	strAbsoluteFilepath := configuration.RootDir + fileHashResult.StrRelativeFilepath
 
 	// Send change from server into client
 
-	// Sending result to client for update
+	// 1. Sending result to client for update
 	err := client.encoder.Encode(fileHashResult)
 	if err != nil {
-		log.Fatal("Connection error from server (processUpdateToClient/sending result): ", err)
+		log.Fatal("Connection error from server (processUpdateToClient/sending result): ", err, client.conn.RemoteAddr())
 	}
-	fmt.Println("Sending to client...")
+	fmt.Println("1. Sending to client...", client.conn.RemoteAddr())
 	fmt.Println(fileHashResult.ArrBlockHash)
 
-	// Receive list of differences from client
+	// 4. Receive list of differences from client
 	arrFileChange := &FileChangeList{}
 	err = client.decoder.Decode(arrFileChange)
-	if err != nil {
-		log.Fatal("Connection error from server (processUpdateToClient/receiving diff): ", err)
-	}
-	fmt.Println("received from client")
+	fmt.Println("4. Received arrFileChange from client", client.conn.RemoteAddr())
 	fmt.Println(*arrFileChange)
+	if err != nil {
+		log.Fatal("Connection error from server (processUpdateToClient/receiving diff): ", err, client.conn.RemoteAddr())
+	}
 	hasher.UpdateDeltaData(arrFileChange.ArrFileChange, strAbsoluteFilepath)
 	fmt.Println("Updated with delta")
 	fmt.Println(arrFileChange)
-	// Resending updated data
+	// 5. Resending updated data
 	err = client.encoder.Encode(arrFileChange)
-	if err != nil {
-		log.Fatal("Connection error from server (processUpdateToClient/resending updated data): ", err)
-	}
-	fmt.Println("Resent to client")
+	fmt.Println("5. Resending to client", client.conn.RemoteAddr())
 	fmt.Println(*arrFileChange)
+	if err != nil {
+		log.Fatal("Connection error from server (processUpdateToClient/resending updated data): ", err, client.conn.RemoteAddr())
+	}
+
+	fmt.Println("Done with client", client.conn.RemoteAddr().String())
+	client.isInUse = false
 }
 
 // prepareUpdateToClient .......
