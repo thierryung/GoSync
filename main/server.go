@@ -2,28 +2,27 @@ package main
 
 // TODO: Add modulo to use smaller int and prevent buffer overflow
 // TODO: Optimize algo, bit shifting instead of modulo?
-// TODOING: Handle errors, especially from readFull (when we still have bytes but have reached the end)
-// TODO: When reading, need to remember what is the current length in window (say we read less than len(window))
-// TODONE: Defer all file closing
-// TODO: Have currBlock and currByte share same underlying array for memory optimization
+// TODO: Have currBlock and currByte share same underlying array for memory optimization?
 // TODO: Profile CPU & Memory usage
-// TODONE: Variable names, decide case style
-// TODO: Need file versioning, especially for conflict handling
-// TODO: Make it a clean architecture
-// TODO: Port in config
-// TODO: Somehow make use of channels and (better?) concurrent design
 // TODO: Log it all!
 // TODO: Above logs, and errors prints, check to standardize
-// TODO: Compress data before sending?
-// TODO: Detect moving file with couple hashes as to not transfer again
-// TODO: Create initialize (all?) struct with New***
-// TODO: Check better to declare global variables or pass through all methods (i.e. chanClientChange, chanClientAdd)
-// TODO: Check TCP connections better to reconnect, keep live, heartbeat?
-// TODO: No file on either end (2 tests)
-// TODO: No folder on either end (2 tests)
-// TODO: Properly terminate/restart connection (on client) when one end closes
-// TODO: Properly terminate/restart connection (on server) when client leaves
-// Feature: Shared Folders
+// TODO: Make it a clean architecture (ask a gopher)
+// TODO: Create initialize (all?) struct with New*** (ask a gopher)
+// TODO: Check better to declare global variables or pass through all methods (i.e. chanClientChange, chanClientAdd) (ask a gopher)
+// TODO: Check TCP connections better to reconnect, keep live, heartbeat? (ask a gopher)
+// TODOING: Defer all file closing?
+// TODOING: Handle errors, especially from readFull (when we still have bytes but have reached the end)
+// TODONE: When reading, need to remember what is the current length in window (say we read less than len(window))
+// TODONE: Variable names, decide case style
+// TODO FEATURE: Need file versioning, especially for conflict handling
+// TODO FEATURE: Port in config
+// TODO FEATURE: Compress data before sending
+// TODO FEATURE: Detect moving file with couple hashes as to not transfer again
+// TODO FEATURE: Shared Folders
+// Tests: No file on either end (2 tests)
+// Tests: No folder on either end (2 tests)
+// Tests: Properly terminate/restart connection (on client) when one end closes
+// Tests: Properly terminate/restart connection (on server) when client leaves
 // Tests: Add/remove char in the beginning, middle, end, random place
 // Tests: Add/remove 2 chars in the beginning, middle, end, random place
 // Tests: Same files
@@ -81,7 +80,9 @@ type Configuration struct {
 // or to receive a modified file from client
 // Note: We currently don't handle multiple changes at once once
 // a single connection. They should be batched one by one.
-func handleConnection(conn net.Conn, chanClientChange chan *FileHashResult, chanClientAdd chan *ClientConnection) {
+func handleConnection(conn net.Conn,
+	chanClientChange chan *FileHashResult,
+	chanClientAdd chan *ClientConnection) {
 	// defer conn.Close()
 	fmt.Println("Accepted a connection from ", conn.RemoteAddr())
 	encoder := gob.NewEncoder(conn)
@@ -104,7 +105,9 @@ func handleConnection(conn net.Conn, chanClientChange chan *FileHashResult, chan
 	}
 }
 
-func processUpdateFromClient(client ClientConnection, fileHashResult *FileHashResult, chanClientChange chan *FileHashResult) {
+func processUpdateFromClient(client ClientConnection,
+	fileHashResult *FileHashResult,
+	chanClientChange chan *FileHashResult) {
 	strAbsoluteFilepath := configuration.RootDir + fileHashResult.StrRelativeFilepath
 
 	// We do our hashing
@@ -142,7 +145,9 @@ func processUpdateFromClient(client ClientConnection, fileHashResult *FileHashRe
 	chanClientChange <- fileHashResult
 }
 
-func processUpdateToClient(client *ClientConnection, fileHashResult *FileHashResult) {
+func processUpdateToClient(client *ClientConnection,
+	fileHashResult *FileHashResult,
+	chanClientRemove chan *ClientConnection) {
 	// Mark as in use
 	if client.isInUse {
 		fmt.Println("Client currently in use", client.conn.RemoteAddr())
@@ -157,7 +162,9 @@ func processUpdateToClient(client *ClientConnection, fileHashResult *FileHashRes
 	// 1. Sending result to client for update
 	err := client.encoder.Encode(fileHashResult)
 	if err != nil {
-		log.Fatal("Connection error from server (processUpdateToClient/sending result): ", err, client.conn.RemoteAddr())
+		chanClientRemove <- client
+		fmt.Println("Client disconnected (processUpdateToClient/sending result)", err, client.conn.RemoteAddr().String())
+		return
 	}
 	fmt.Println("1. Sending to client...", client.conn.RemoteAddr())
 	fmt.Println(fileHashResult.ArrBlockHash)
@@ -168,7 +175,9 @@ func processUpdateToClient(client *ClientConnection, fileHashResult *FileHashRes
 	fmt.Println("4. Received arrFileChange from client", client.conn.RemoteAddr())
 	fmt.Println(*arrFileChange)
 	if err != nil {
-		log.Fatal("Connection error from server (processUpdateToClient/receiving diff): ", err, client.conn.RemoteAddr())
+		chanClientRemove <- client
+		fmt.Println("Client disconnected (processUpdateToClient/receiving diff)", err, client.conn.RemoteAddr().String())
+		return
 	}
 	hasher.UpdateDeltaData(arrFileChange.ArrFileChange, strAbsoluteFilepath)
 	fmt.Println("Updated with delta")
@@ -178,7 +187,9 @@ func processUpdateToClient(client *ClientConnection, fileHashResult *FileHashRes
 	fmt.Println("5. Resending to client", client.conn.RemoteAddr())
 	fmt.Println(*arrFileChange)
 	if err != nil {
-		log.Fatal("Connection error from server (processUpdateToClient/resending updated data): ", err, client.conn.RemoteAddr())
+		chanClientRemove <- client
+		fmt.Println("Client disconnected (processUpdateToClient/resending updated data)", err, client.conn.RemoteAddr().String())
+		return
 	}
 
 	fmt.Println("Done with client", client.conn.RemoteAddr().String())
@@ -195,7 +206,7 @@ func prepareUpdateToClient(fileHashResult *FileHashResult) FileHashResult {
 	return FileHashResult{StrRelativeFilepath: fileHashResult.StrRelativeFilepath, ArrBlockHash: arrBlockHash}
 }
 
-func processAllClients(chanClientChange chan *FileHashResult, chanClientAdd chan *ClientConnection) {
+func processAllClients(chanClientChange chan *FileHashResult, chanClientAdd chan *ClientConnection, chanClientRemove chan *ClientConnection) {
 	clients := make(map[string]*ClientConnection)
 
 	for {
@@ -208,17 +219,17 @@ func processAllClients(chanClientChange chan *FileHashResult, chanClientAdd chan
 			for _, client := range clients {
 				if change.UpdaterClientId != strings.Split(client.conn.RemoteAddr().String(), ":")[0] {
 					fmt.Printf("Sending update to client ip %s, original client ip %s\n", client.conn.RemoteAddr(), change.UpdaterClientId)
-					go processUpdateToClient(client, &fileHashResult)
+					go processUpdateToClient(client, &fileHashResult, chanClientRemove)
 				}
 			}
 			// Process new clients
 		case client := <-chanClientAdd:
 			fmt.Println("New client: ", client.conn.RemoteAddr())
 			clients[strings.Split(client.conn.RemoteAddr().String(), ":")[0]] = client
-			// TODO: When clients logs off
-			// case conn := <-rmchan:
-			// fmt.Printf("Client disconnects: %v\n", conn)
-			// delete(clients, conn)
+			// When clients logs off
+		case client := <-chanClientRemove:
+			fmt.Printf("Client disconnects: %v\n", client.conn.RemoteAddr().String())
+			delete(clients, strings.Split(client.conn.RemoteAddr().String(), ":")[0])
 		}
 	}
 }
@@ -286,7 +297,9 @@ func main() {
 	chanClientChange := make(chan *FileHashResult)
 	// Clients to add will be funneled here
 	chanClientAdd := make(chan *ClientConnection)
-	go processAllClients(chanClientChange, chanClientAdd)
+	// Clients to remove will be funneled here
+	chanClientRemove := make(chan *ClientConnection)
+	go processAllClients(chanClientChange, chanClientAdd, chanClientRemove)
 
 	// Start the server with tls certificates
 	cert, err := tls.LoadX509KeyPair("../cert/cert2pem.pem", "../cert/key2.pem")

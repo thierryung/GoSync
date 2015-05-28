@@ -4,7 +4,7 @@ import (
 	"bufio"
 )
 
-// Represents our circling window
+// WindowBytes represents our circling window
 type WindowBytes struct {
 	// The current bytes for this window
 	currBytes []byte
@@ -74,6 +74,7 @@ func (w *WindowBytes) readFull(reader *bufio.Reader) (n int, err error) {
 	// Copy this window to our block
 	copy(w.currBlock, w.currBytes)
 	// Truncate off the rest
+	// (do we have a memory leak, with truncate here and append in addByte?)
 	w.currBlock = w.currBlock[0:w.length]
 
 	return c, err
