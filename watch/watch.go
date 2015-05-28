@@ -43,7 +43,6 @@ func (watcher *RecursiveWatcher) AddFolder(folder string) {
 	if err != nil {
 		log.Println("Error watching: ", folder, err)
 	}
-	watcher.Folders <- folder
 }
 
 // Subfolders returns a slice of subfolders (recursive), including the folder provided.

@@ -39,14 +39,12 @@ func HashFile(strFilepath string) []BlockHash {
 	// Read file
 	f, err := os.Open(strFilepath)
 	if err != nil {
-		fmt.Println("Err in opening file")
-		fmt.Println(err)
+		fmt.Println("Err in opening file", err)
 		return arrBlockHash
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			fmt.Println("Err in closing file")
-			fmt.Println(err)
+			fmt.Println("Err in closing file", err)
 			return
 		}
 	}()
@@ -55,8 +53,7 @@ func HashFile(strFilepath string) []BlockHash {
 	// Reset the read window, we'll slide from there
 	lenCurr, err = window.readFull(reader)
 	if err != nil && lenCurr <= 0 {
-		fmt.Println(err)
-		fmt.Println("Err in reading file")
+		fmt.Println("Err in reading file", err)
 		return arrBlockHash
 	}
 	c += lenCurr

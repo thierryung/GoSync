@@ -10,11 +10,13 @@ package main
 // TODO: Create initialize (all?) struct with New*** (ask a gopher)
 // TODO: Check better to declare global variables or pass through all methods (i.e. chanClientChange, chanClientAdd) (ask a gopher)
 // TODO: Check TCP connections better to reconnect, keep live, heartbeat? (ask a gopher)
+// TODO: Folder renaming, file renaming
 // TODOING: Defer all file closing?
 // TODOING: Handle errors, especially from readFull (when we still have bytes but have reached the end)
 // TODONE: When reading, need to remember what is the current length in window (say we read less than len(window))
 // TODONE: Variable names, decide case style
 // TODO FEATURE: Need file versioning, especially for conflict handling
+// TODO FEATURE: Related to above, client needs current file state, to get updated state from a specific version
 // TODO FEATURE: Port in config
 // TODO FEATURE: Compress data before sending
 // TODO FEATURE: Detect moving file with couple hashes as to not transfer again
@@ -41,6 +43,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime/pprof"
 	"strings"
 	"time"
@@ -108,7 +111,13 @@ func handleConnection(conn net.Conn,
 func processUpdateFromClient(client ClientConnection,
 	fileHashResult *FileHashResult,
 	chanClientChange chan *FileHashResult) {
-	strAbsoluteFilepath := configuration.RootDir + fileHashResult.StrRelativeFilepath
+	strAbsoluteFilepath := configuration.RootDir + filepath.FromSlash(fileHashResult.StrRelativeFilepath)
+
+	// Check if file exists, if not create it
+	// TODO: Possible optimization here, skip all processes just upload it
+	if hasher.CheckFileExists(strAbsoluteFilepath) != true {
+		fmt.Println("Error while creating local file, aborting update from client", strAbsoluteFilepath)
+	}
 
 	// We do our hashing
 	fmt.Println("Do hashing of file", strAbsoluteFilepath)
@@ -149,13 +158,14 @@ func processUpdateToClient(client *ClientConnection,
 	fileHashResult *FileHashResult,
 	chanClientRemove chan *ClientConnection) {
 	// Mark as in use
+	// TODO: Check if really needed?
 	if client.isInUse {
 		fmt.Println("Client currently in use", client.conn.RemoteAddr())
 		return
 	}
 	client.isInUse = true
 	fmt.Println("Do update to client ", client.conn.RemoteAddr())
-	strAbsoluteFilepath := configuration.RootDir + fileHashResult.StrRelativeFilepath
+	strAbsoluteFilepath := configuration.RootDir + filepath.FromSlash(fileHashResult.StrRelativeFilepath)
 
 	// Send change from server into client
 
@@ -200,7 +210,7 @@ func processUpdateToClient(client *ClientConnection,
 // also pre-hashes file server side
 func prepareUpdateToClient(fileHashResult *FileHashResult) FileHashResult {
 	// Hashing file on our end
-	strAbsoluteFilepath := configuration.RootDir + fileHashResult.StrRelativeFilepath
+	strAbsoluteFilepath := configuration.RootDir + filepath.FromSlash(fileHashResult.StrRelativeFilepath)
 	arrBlockHash := hasher.HashFile(strAbsoluteFilepath)
 
 	return FileHashResult{StrRelativeFilepath: fileHashResult.StrRelativeFilepath, ArrBlockHash: arrBlockHash}

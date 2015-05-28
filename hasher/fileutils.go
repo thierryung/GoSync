@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 )
 
 const (
@@ -167,4 +169,27 @@ func UpdateDestinationFile(arrFileChange []FileChange, strFilepath string) {
 		fmt.Println("Error when removing file ", err)
 		return
 	}
+}
+
+// CheckFileExists will create file if it does not already exists
+// It will also create associated parent directories if needed
+func CheckFileExists(strFilepath string) bool {
+	// Create dir if does not exists
+	strDir := filepath.Dir(strFilepath)
+	err := os.MkdirAll(strDir, 0775)
+	if err != nil {
+		fmt.Println("Error while dir for file", strDir, strFilepath, err)
+		return false
+	}
+
+	if _, err := os.Stat(strFilepath); err == nil {
+		return true
+	}
+	fmt.Println("No such file or directory, creating...", strFilepath)
+	err = ioutil.WriteFile(strFilepath, nil, 0644)
+	if err != nil {
+		fmt.Println("Error while creating", strFilepath, err)
+		return false
+	}
+	return true
 }
