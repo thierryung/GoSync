@@ -18,6 +18,8 @@ const (
 
 	HASH_WINDOW_SIZE int    = 3
 	HASH_MASK        uint64 = (1 << 2) - 1
+
+	PROCESSING_DIR string = ".apesync"
 )
 
 func UpdateDeltaData(arrFileChange []FileChange, strFilepath string) {
@@ -57,10 +59,12 @@ func UpdateDeltaData(arrFileChange []FileChange, strFilepath string) {
 // 4. Do some file integrity checking
 // 5. If all goes well, remove original
 // TODO: Change .tmp extension to avoid possible collision (random?)
-func UpdateDestinationFile(arrFileChange []FileChange, strFilepath string) {
+func UpdateDestinationFile(arrFileChange []FileChange, strFilepath string, rootDir string) {
 	// TODO: Check if we need to manually split chunks of data read
 
 	var iToRead, iLastFilePointerPosition int = 0, 0
+	var strProcessingDir = rootDir + PROCESSING_DIR + string(filepath.Separator)
+	var strTempFilepath = strProcessingDir + filepath.Base(strFilepath)
 
 	// open input file
 	fi, err := os.Open(strFilepath)
@@ -71,8 +75,14 @@ func UpdateDestinationFile(arrFileChange []FileChange, strFilepath string) {
 	// make a read buffer
 	r := bufio.NewReader(fi)
 
-	// open output file
-	fo, err := os.Create(strFilepath + ".tmp")
+	// open temp output file
+	// Check if file exists, if not create it
+	// TODO: Possible optimization here, skip all processes just upload it
+	if CreateFileIfNotExists(strTempFilepath) != true {
+		fmt.Println("Error while creating local file, aborting update dest file", strTempFilepath)
+		return
+	}
+	fo, err := os.Create(strTempFilepath)
 	if err != nil {
 		fmt.Println("Error when opening output file ", err)
 		return
@@ -152,44 +162,64 @@ func UpdateDestinationFile(arrFileChange []FileChange, strFilepath string) {
 		return
 	}
 
+	// Delete possible temporary file
+	os.Remove(strTempFilepath + ".orig")
+
 	// Renaming old file
-	if err = os.Rename(strFilepath, strFilepath+".orig"); err != nil {
-		fmt.Println("Error when renaming file ", err)
+	if err = os.Rename(strFilepath, strTempFilepath+".orig"); err != nil {
+		fmt.Println("Error when renaming old file ", err)
 		return
 	}
 
 	// Renaming new file
-	if err = os.Rename(strFilepath+".tmp", strFilepath); err != nil {
-		fmt.Println("Error when renaming file ", err)
+	if err = os.Rename(strTempFilepath, strFilepath); err != nil {
+		fmt.Println("Error when renaming new file ", err)
 		return
 	}
 
 	// Finally, if all went well, remove old original file
-	if err = os.Remove(strFilepath + ".orig"); err != nil {
-		fmt.Println("Error when removing file ", err)
-		return
-	}
+	// if err = os.Remove(strTempFilepath + ".orig"); err != nil {
+	// fmt.Println("Error when removing file ", err)
+	// return
+	// }
 }
 
-// CheckFileExists will create file if it does not already exists
+// CreateFileIfNotExists will create file if it does not already exists
 // It will also create associated parent directories if needed
-func CheckFileExists(strFilepath string) bool {
+func CreateFileIfNotExists(strFilepath string) bool {
 	// Create dir if does not exists
 	strDir := filepath.Dir(strFilepath)
-	err := os.MkdirAll(strDir, 0775)
-	if err != nil {
-		fmt.Println("Error while dir for file", strDir, strFilepath, err)
-		return false
+	if _, err := os.Stat(strDir); err != nil {
+		err := os.MkdirAll(strDir, 0775)
+		if err != nil {
+			fmt.Println("Error while dir for file", strDir, strFilepath, err)
+			return false
+		}
 	}
 
 	if _, err := os.Stat(strFilepath); err == nil {
 		return true
 	}
 	fmt.Println("No such file or directory, creating...", strFilepath)
-	err = ioutil.WriteFile(strFilepath, nil, 0644)
+	err := ioutil.WriteFile(strFilepath, nil, 0644)
 	if err != nil {
 		fmt.Println("Error while creating", strFilepath, err)
 		return false
+	}
+	return true
+}
+
+//
+func PrepareProcessingDir(strDirpath string) bool {
+	// Create dir if does not exists
+	strDir := strDirpath + PROCESSING_DIR
+	if _, err := os.Stat(strDir); err != nil {
+		err := os.MkdirAll(strDir, 0775)
+		if err != nil {
+			fmt.Println("Error while dir for file", strDir, err)
+			return false
+		}
+		fmt.Println("Created processing dir", strDir)
 	}
 	return true
 }
