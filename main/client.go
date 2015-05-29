@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"gopkg.in/fsnotify.v1"
 	"thierry/sync/hasher"
@@ -61,9 +60,11 @@ func monitorLocalChanges(rootdir string, cafile string, server string) {
 						// eg. stat .subl513.tmp : no such file or directory
 						fmt.Println(err)
 					} else if fi.IsDir() {
-						fmt.Println("Detected new directory %s", event.Name)
+						fmt.Println("Detected new directory", event.Name)
 						if !watch.ShouldIgnoreFile(filepath.Base(event.Name)) {
+							fmt.Println("Monitoring new folder...")
 							watcher.AddFolder(event.Name)
+							//watcher.Folders <- event.Name
 						}
 					} else {
 						fmt.Println("Detected new file %s", event.Name)
@@ -74,8 +75,15 @@ func monitorLocalChanges(rootdir string, cafile string, server string) {
 				case event.Op&fsnotify.Write == fsnotify.Write:
 					// modified a file, assuming that you don't modify folders
 					fmt.Println("Detected file modification %s", event.Name)
-					// TODO: Remove, but for now don't handle .tmp files
-					if strings.Index(event.Name, ".tmp") == -1 && strings.Index(event.Name, ".swp") == -1 {
+					// TODO: Remove, but for now don't handle .tmp files, nor folders
+					fi, err := os.Stat(event.Name)
+					if err != nil {
+						fmt.Println(err)
+					}
+					if strings.Index(event.Name, ".tmp") == -1 &&
+						strings.Index(event.Name, ".orig") == -1 &&
+						strings.Index(event.Name, ".swp") == -1 &&
+						fi.Mode().IsRegular() {
 						// watcher.Files <- event.Name
 						log.Println("Modified file: ", event.Name)
 						connsender := connectToServer(cafile, server)
@@ -117,7 +125,7 @@ func sendClientChanges(conn net.Conn, strAbsoluteFilepath string) {
 	fmt.Println("1. Sending to server...")
 	fmt.Println(arrBlockHash)
 	encoder := gob.NewEncoder(conn)
-	err = encoder.Encode(FileHashResult{StrRelativeFilepath: strRelativeFilepath, ArrBlockHash: arrBlockHash, IsClientUpdate: true})
+	err = encoder.Encode(FileHashResult{StrRelativeFilepath: filepath.ToSlash(strRelativeFilepath), ArrBlockHash: arrBlockHash, IsClientUpdate: true})
 	if err != nil {
 		log.Fatal("Connection error from client (sendclientchanges/sending result): ", err)
 	}
@@ -161,7 +169,13 @@ func receiveServerChanges(conn net.Conn) {
 		fmt.Println("2. Receiving from server")
 		fmt.Println(*fileHashResult)
 
-		strAbsoluteFilepath := configuration.RootDir + fileHashResult.StrRelativeFilepath
+		strAbsoluteFilepath := configuration.RootDir + filepath.FromSlash(fileHashResult.StrRelativeFilepath)
+
+		// Check if file exists, if not create it
+		// TODO: Possible optimization here, skip all processes just upload it
+		if hasher.CheckFileExists(strAbsoluteFilepath) != true {
+			fmt.Println("Error while creating local file, aborting update from client", strAbsoluteFilepath)
+		}
 
 		// We do our hashing
 		fmt.Println("Do hashing from client")
@@ -232,11 +246,6 @@ func main() {
 	connreceiver := connectToServer(configuration.CertFilepath, configuration.ServerIp)
 	go receiveServerChanges(connreceiver)
 	monitorLocalChanges(configuration.RootDir, configuration.CertFilepath, configuration.ServerIp)
-
-	// For now, sleep 1 second
-	// What we really want to do is to block (channel?)
-	// until we have a file change locally to send to server
-	time.Sleep(1000 * time.Millisecond)
 
 	//conn.Close()
 	<-done

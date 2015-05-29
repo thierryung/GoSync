@@ -10,7 +10,9 @@ package main
 // TODO: Create initialize (all?) struct with New*** (ask a gopher)
 // TODO: Check better to declare global variables or pass through all methods (i.e. chanClientChange, chanClientAdd) (ask a gopher)
 // TODO: Check TCP connections better to reconnect, keep live, heartbeat? (ask a gopher)
+// TODO: New empty folders, also sync. Right now folders are synced when new content updated.
 // TODO: Folder renaming, file renaming
+// TODO: Folder and file remove
 // TODOING: Defer all file closing?
 // TODOING: Handle errors, especially from readFull (when we still have bytes but have reached the end)
 // TODONE: When reading, need to remember what is the current length in window (say we read less than len(window))
@@ -165,7 +167,7 @@ func processUpdateToClient(client *ClientConnection,
 	}
 	client.isInUse = true
 	fmt.Println("Do update to client ", client.conn.RemoteAddr())
-	strAbsoluteFilepath := configuration.RootDir + filepath.FromSlash(fileHashResult.StrRelativeFilepath)
+	strAbsoluteFilepath := configuration.RootDir + filepath.ToSlash(fileHashResult.StrRelativeFilepath)
 
 	// Send change from server into client
 
