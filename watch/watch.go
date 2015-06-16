@@ -1,4 +1,7 @@
-// From https://github.com/nathany/looper/blob/master/watch.go
+// This is a wrapper around a recursive watcher
+// It is needed to filter through the discrepancies in notifications
+// accross platforms, or simply strange notifications.
+// i.e.: double create on windows (https://github.com/howeyc/fsnotify/issues/106)
 package watch
 
 import (
@@ -7,70 +10,118 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"gopkg.in/fsnotify.v1"
+  
+  "thierry/sync/md5"
 )
 
-type RecursiveWatcher struct {
-	*fsnotify.Watcher
-	Files   chan string
-	Folders chan string
+type FileEvent struct {
+  EventType Event
+  FileType  string
 }
 
-func NewRecursiveWatcher(path string, except string) (*RecursiveWatcher, error) {
-	folders := Subfolders(path, except)
-	if len(folders) == 0 {
-		return nil, errors.New("No folders to watch.")
-	}
-
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return nil, err
-	}
-	rw := &RecursiveWatcher{Watcher: watcher}
-
-	rw.Files = make(chan string, 10)
-	rw.Folders = make(chan string, len(folders))
-
-	for _, folder := range folders {
-		rw.AddFolder(folder)
-	}
-	return rw, nil
+type GlobalWatcher struct {
+  Events chan FileEvent
+  Errors chan error
+  Ignore string
+  Watcher *RecursiveWatcher
+  FileHash map[string]string
 }
 
-func (watcher *RecursiveWatcher) AddFolder(folder string) {
-	err := watcher.Add(folder)
-	if err != nil {
-		log.Println("Error watching: ", folder, err)
+func NewWatcher(rootdir string, except string) (*GlobalWatcher, error) {
+  watcher, err := NewRecursiveWatcher(rootdir, except)
+  if err != nil {
+		log.Println("Watcher create error : ", err)
+    return nil, err
 	}
+	defer watcher.Close()
+	_done := make(chan bool)
+  
+	globalwatcher := &GlobalWatcher{Watcher: watcher}
+	globalwatcher.Events = make(chan Event)
+	globalwatcher.Errors = make(chan error)
+	globalwatcher.Ignore = except
+  
+  return globalwatcher
 }
 
-// Subfolders returns a slice of subfolders (recursive), including the folder provided.
-func Subfolders(path string, except string) (paths []string) {
-	filepath.Walk(path, func(newPath string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
+func (w GlobalWatcher) start() {
+	go func() {
+		for {
+			select {
+			case event := <-w.watcher.Events:
+				if ShouldIgnoreFile(filepath.Base(event.Name), w.Ignore) {
+					continue
+				}
+				switch {
+				// create a file/directory
+				case event.Op&fsnotify.Create == fsnotify.Create:
+					fi, err := os.Stat(event.Name)
+					if err != nil {
+						fmt.Println(err)
+						continue
+					} else if fi.IsDir() {
+						fmt.Println("Detected new directory", event.Name)
+						if !ShouldIgnoreFile(filepath.Base(event.Name), w.Ignore) {
+							fmt.Println("Monitoring new folder...")
+							w.watcher.AddFolder(event.Name)
+              w.Events <- FileEvent{EventType: event, FileType: "folder"}
+						}
+					} else {
+            // Here double check if file has changed before sending event
+            if w.hasFileChanged(event.Name) {
+              w.Events <- FileEvent{EventType: event, FileType: "file"}
+            } else {
+							fmt.Println("File created notification has not changed", event.Name)
+            }
+					}
 
-    // log.Println(info.Name())
-    // log.Println(newPath)
+				case event.Op&fsnotify.Write == fsnotify.Write:
+					// modified a file, assuming that you don't modify folders
+					fmt.Println("Detected file modification %s", event.Name)
+					// Don't handle folder change, since they receive notification
+					// when a file they contain is changed
+					fi, err := os.Stat(event.Name)
+					if err != nil {
+						fmt.Println(err)
+						continue
+					}
+					if fi.Mode().IsRegular() {
+						log.Println("Modified file: ", event.Name)
+            // Here double check if file has changed before sending event
+            if w.hasFileChanged(event.Name) {
+              w.Events <- FileEvent{EventType: event, FileType: "file"}
+            } else {
+							fmt.Println("File modified notification has not changed", event.Name)
+            }
+					}
+				case event.Op&fsnotify.Remove == fsnotify.Remove:
+					log.Println("Removed: ", event.Name)
+          w.Events <- FileEvent{EventType: event}
+          
+				case event.Op&fsnotify.Rename == fsnotify.Rename:
+					log.Println("Renamed file: ", event.Name)
+					// The following is to handle an issue in fsnotify
+					// On rename, fsnotify sends three events on linux: RENAME(old), CREATE(new), RENAME(new)
+					// fsnotify sends two events on windows: RENAME(old), CREATE(new)
+					_, err := os.Stat(event.Name)
+					if err != nil {
+						// Rename talks about a file/folder now gone, send a remove request to server
+						log.Println("Rename leading to delete", event.Name)
+						connsender := connectToServer(cafile, server)
+						go sendClientDelete(connsender, event.Name, listFileInProcess)
+					} else {
+						// Rename talks about a file/folder already existing, skip it (do nothing)
+					}
+				case event.Op&fsnotify.Chmod == fsnotify.Chmod:
+					log.Println("File changed permission: ", event.Name)
+				}
 
-		if info.IsDir() {
-			name := info.Name()
-			// skip folders that begin with a dot
-      // TODO: test if name != "." && name != ".." is needed
-			if ShouldIgnoreFile(name, except) && name != "." && name != ".." {
-				return filepath.SkipDir
+			case err := <-w.watcher.Errors:
+				log.Println("w watching error : ", err)
+				_done <- true
+				done <- true
 			}
-			paths = append(paths, newPath)
 		}
-		return nil
-	})
-	return paths
-}
 
-// shouldIgnoreFile determines if a file should be ignored.
-// File names that begin with "." or "_" are ignored by the go tool.
-func ShouldIgnoreFile(name string, except string) bool {
-	return strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == except
+	}()
 }

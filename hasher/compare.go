@@ -11,16 +11,6 @@ type FileChange struct {
 	LengthToRemove int
 }
 
-func checkOutOfBounds(arr []BlockHash, num int) int {
-	if num < 0 {
-		num = 0
-	}
-	if num > len(arr) {
-		num = len(arr)
-	}
-	return num
-}
-
 func CalculateLengthBetween(b []BlockHash, start, end int) int {
 	var result int = 0
 	// Sanity check

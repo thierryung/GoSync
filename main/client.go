@@ -41,10 +41,55 @@ type Configuration struct {
 	ServerIp     string
 }
 
+type FileInProcess struct {
+	filepath string
+	status   map[string]bool
+}
+
+type ListFileInProcess struct {
+	list map[string]FileInProcess
+}
+
+func (l *ListFileInProcess) setInProcess(filepath string, status string) {
+	if _, ok := l.list[filepath]; ok == true {
+		fmt.Println("File already in process, trying to reset it to ", filepath, status)
+	} else {
+		l.list[filepath] = FileInProcess{filepath: filepath, status: make(map[string]bool)}
+	}
+
+	l.list[filepath].status[status] = true
+	// Status has some extra notifications we want to skip
+	if status == "update" {
+		//l.list[filepath].status["rename"] = true
+		l.list[filepath].status["delete"] = true
+	}
+}
+
+func (l *ListFileInProcess) setDoneProcess(filepath string, status string) {
+	if _, ok := l.list[filepath]; ok == false {
+		fmt.Println("Could not find file already in process, trying to set done to ", filepath, status)
+		return
+	}
+
+	delete(l.list[filepath].status, status)
+	fmt.Println("Done with process on file ", filepath, status, l.list[filepath])
+}
+
+func (l *ListFileInProcess) isInProcess(filepath string) bool {
+	if _, ok := l.list[filepath]; ok == false {
+		fmt.Println("Could not find file already in process, trying to check in process status ", filepath)
+		return false
+	}
+
+	fmt.Println("File check requested, result ", filepath, l.list[filepath].status)
+	return len(l.list[filepath].status) > 0
+}
+
 // monitorLocalChanges will wait for io changes......
-func monitorLocalChanges(rootdir string, cafile string, server string, listFileInProcess map[string]bool) {
+func monitorLocalChanges(rootdir string, cafile string, server string, listFileInProcess *ListFileInProcess) {
 	fmt.Println("*** Recursively monitoring folder", rootdir)
-	watcher, err := watch.NewRecursiveWatcher(rootdir, hasher.PROCESSING_DIR)
+	watcher, err := watch.NewWatcher(rootdir, hasher.PROCESSING_DIR)
+	//watcher, err := watch.NewRecursiveWatcher(rootdir, hasher.PROCESSING_DIR)
 	if err != nil {
 		log.Println("Watcher create error : ", err)
 	}
@@ -52,21 +97,12 @@ func monitorLocalChanges(rootdir string, cafile string, server string, listFileI
 	_done := make(chan bool)
 
 	go func() {
+		watcher.start()
+
 		for {
 			select {
 			case event := <-watcher.Events:
-				// Check if we're currently working on this file
-				if _, ok := listFileInProcess[event.Name]; ok == true {
-					fmt.Println("Currently working on file, skipping...", event.Name)
-					continue
-				}
-
-				if watch.ShouldIgnoreFile(filepath.Base(event.Name), hasher.PROCESSING_DIR) {
-					continue
-				}
-
 				switch {
-				// create a file/directory
 				case event.Op&fsnotify.Create == fsnotify.Create:
 					fi, err := os.Stat(event.Name)
 					if err != nil {
@@ -79,18 +115,18 @@ func monitorLocalChanges(rootdir string, cafile string, server string, listFileI
 							fmt.Println("Monitoring new folder...")
 							watcher.AddFolder(event.Name)
 							connsender := connectToServer(cafile, server)
-							go sendClientFolderChanges(connsender, event.Name)
+							go sendClientFolderChanges(connsender, event.Name, listFileInProcess)
 							//watcher.Folders <- event.Name
 						}
 					} else {
-						fmt.Println("Detected new file %s", event.Name)
+						fmt.Println("Detected new file, for now do nothing", event.Name)
 						// watcher.Files <- event.Name // created a file
-						// Commented out since we don't read from new file
+						// TODO
 					}
 
 				case event.Op&fsnotify.Write == fsnotify.Write:
 					// modified a file, assuming that you don't modify folders
-					fmt.Println("Detected file modification %s", event.Name)
+					fmt.Println("Detected file modification", event.Name)
 					// Don't handle folder change, since they receive notification
 					// when a file they contain is changed
 					fi, err := os.Stat(event.Name)
@@ -101,13 +137,13 @@ func monitorLocalChanges(rootdir string, cafile string, server string, listFileI
 					if fi.Mode().IsRegular() {
 						// watcher.Files <- event.Name
 						log.Println("Modified file: ", event.Name)
-						connsender := connectToServer(cafile, server)
-						go sendClientChanges(connsender, event.Name)
+						// connsender := connectToServer(cafile, server)
+						// go sendClientChanges(connsender, event.Name, listFileInProcess)
 					}
 				case event.Op&fsnotify.Remove == fsnotify.Remove:
 					log.Println("Removed file: ", event.Name)
-					connsender := connectToServer(cafile, server)
-					go sendClientDelete(connsender, event.Name)
+					// connsender := connectToServer(cafile, server)
+					// go sendClientDelete(connsender, event.Name, listFileInProcess)
 				case event.Op&fsnotify.Rename == fsnotify.Rename:
 					log.Println("Renamed file: ", event.Name)
 					// The following is to handle an issue in fsnotify
@@ -123,7 +159,7 @@ func monitorLocalChanges(rootdir string, cafile string, server string, listFileI
 						// Rename talks about a file/folder now gone, send a remove request to server
 						log.Println("Rename leading to delete", event.Name)
 						connsender := connectToServer(cafile, server)
-						go sendClientDelete(connsender, event.Name)
+						go sendClientDelete(connsender, event.Name, listFileInProcess)
 					} else {
 						// Rename talks about a file/folder already existing, skip it (do nothing)
 					}
@@ -143,13 +179,21 @@ func monitorLocalChanges(rootdir string, cafile string, server string, listFileI
 	<-_done
 }
 
-func sendClientChanges(conn net.Conn, strAbsoluteFilepath string) {
+func sendClientChanges(conn net.Conn, strAbsoluteFilepath string, listFileInProcess *ListFileInProcess) {
 	// Here locally, we always work with absolute path, unless we're sending them to server
 	strRelativeFilepath, err := filepath.Rel(configuration.RootDir, strAbsoluteFilepath)
 	fmt.Println("Updated file:", strRelativeFilepath)
-	// if err != nil {
-	// log.Fatal("Could not resolve relative path of ", configuration.RootDir, strAbsoluteFilepath, err)
-	// }
+	if err != nil {
+		log.Fatal("Could not resolve relative path of ", configuration.RootDir, strAbsoluteFilepath, err)
+	}
+
+	// Check if we're currently working on this file (fsnotify windows may send double notices)
+	defer listFileInProcess.setDoneProcess(strRelativeFilepath, "update")
+	if listFileInProcess.isInProcess(strRelativeFilepath) {
+		fmt.Println("Currently working on file, skipping...", strAbsoluteFilepath)
+		return
+	}
+	listFileInProcess.setInProcess(strRelativeFilepath, "update")
 
 	defer conn.Close()
 	// Hashing file on our end
@@ -181,11 +225,13 @@ func sendClientChanges(conn net.Conn, strAbsoluteFilepath string) {
 	}
 	fmt.Println("4. Resent to server")
 	fmt.Println(*arrFileChange)
+
+	fmt.Println("Done processing file change", strAbsoluteFilepath)
 }
 
 // sendClientFolderChanges looks into the requested folder and for each file
 // will send a "new file" request to server
-func sendClientFolderChanges(conn net.Conn, strAbsoluteFilepath string) {
+func sendClientFolderChanges(conn net.Conn, strAbsoluteFilepath string, listFileInProcess *ListFileInProcess) {
 	fi, err := os.Stat(strAbsoluteFilepath)
 	if err != nil {
 		fmt.Println("Not a real dir!", strAbsoluteFilepath)
@@ -211,15 +257,23 @@ func sendClientFolderChanges(conn net.Conn, strAbsoluteFilepath string) {
 		}
 		if fi.Mode().IsRegular() {
 			fmt.Println(file)
-			//sendClientChanges(conn, file)
+			//sendClientChanges(conn, file, listFileInProcess)
 		}
 	}
 }
 
-func sendClientDelete(conn net.Conn, strAbsoluteFilepath string) {
+func sendClientDelete(conn net.Conn, strAbsoluteFilepath string, listFileInProcess *ListFileInProcess) {
 	// Here locally, we always work with absolute path, unless we're sending them to server
 	strRelativeFilepath, err := filepath.Rel(configuration.RootDir, strAbsoluteFilepath)
 	fmt.Println("Deleted file:", strRelativeFilepath)
+
+	// Check if we're currently working on this file (fsnotify windows may send double notices)
+	defer listFileInProcess.setDoneProcess(strRelativeFilepath, "delete")
+	if listFileInProcess.isInProcess(strRelativeFilepath) {
+		fmt.Println("Currently working on file, skipping...", strAbsoluteFilepath)
+		return
+	}
+	listFileInProcess.setInProcess(strRelativeFilepath, "delete")
 
 	defer conn.Close()
 	// Sending result to server for delete
@@ -229,9 +283,12 @@ func sendClientDelete(conn net.Conn, strAbsoluteFilepath string) {
 	if err != nil {
 		log.Fatal("Connection error from client (sendClientDelete/sending delete): ", err)
 	}
+
+	// Indicate we're done working on this file
+	fmt.Println("Done processing file delete", strAbsoluteFilepath)
 }
 
-func receiveServerChanges(conn net.Conn, listFileInProcess map[string]bool) {
+func receiveServerChanges(conn net.Conn, listFileInProcess *ListFileInProcess) {
 	// Sending result to server for update
 	encoder := gob.NewEncoder(conn)
 	err := encoder.Encode(FileHashResult{IsClientUpdate: false})
@@ -251,20 +308,18 @@ func receiveServerChanges(conn net.Conn, listFileInProcess map[string]bool) {
 		fmt.Println("2. Receiving from server")
 		fmt.Println(*fileHashResult)
 
-		// Indicate we're currently working on this file
-		strAbsoluteFilepath := configuration.RootDir + filepath.FromSlash(fileHashResult.StrRelativeFilepath)
-		listFileInProcess[strAbsoluteFilepath] = true
-
 		// Check if we're trying to update or delete
 		if fileHashResult.IsDelete == true {
+			listFileInProcess.setInProcess(fileHashResult.StrRelativeFilepath, "delete")
 			processDeleteFromServer(fileHashResult)
+			listFileInProcess.setDoneProcess(fileHashResult.StrRelativeFilepath, "delete")
 		} else {
+			listFileInProcess.setInProcess(fileHashResult.StrRelativeFilepath, "update")
 			processChangeFromServer(fileHashResult, encoder, decoder)
+			listFileInProcess.setDoneProcess(fileHashResult.StrRelativeFilepath, "update")
 		}
 
-		// Indicate we're done working on this file
-		delete(listFileInProcess, strAbsoluteFilepath)
-		fmt.Println("Done processing from server", strAbsoluteFilepath)
+		fmt.Println("Done processing from server", fileHashResult.StrRelativeFilepath)
 	}
 }
 
@@ -330,7 +385,7 @@ func connectToServer(cafile string, server string) net.Conn {
 	certs := x509.NewCertPool()
 	pemData, err := ioutil.ReadFile(cafile)
 	if err != nil {
-		log.Fatal("Connection error from client: ", err)
+		log.Fatal("Connection error from client file not found: ", err, cafile)
 		return nil
 	}
 	certs.AppendCertsFromPEM(pemData)
@@ -338,7 +393,7 @@ func connectToServer(cafile string, server string) net.Conn {
 
 	conn, err := tls.Dial("tcp", server, &config)
 	if err != nil {
-		log.Fatal("Connection error from client: ", err)
+		log.Fatal("Connection error from client when dialing: ", err, certs)
 		return nil
 	}
 	fmt.Println("Connected to server")
@@ -359,13 +414,10 @@ func main() {
 	}
 	fmt.Println("Root dir setup:", configuration.RootDir)
 
-	// Prepare our processing dir
-	if !hasher.PrepareProcessingDir(configuration.RootDir) {
-		log.Fatal("Could not prepare processing dir")
-	}
-
 	// List of currently modifying files. To avoid leaking recursive notification.
-	listFileInProcess := make(map[string]bool)
+	// And also to fix issues such as https://github.com/howeyc/fsnotify/issues/106
+	listFileInProcess := &ListFileInProcess{make(map[string]FileInProcess)}
+	fmt.Println(configuration.CertFilepath)
 
 	connreceiver := connectToServer(configuration.CertFilepath, configuration.ServerIp)
 	go receiveServerChanges(connreceiver, listFileInProcess)

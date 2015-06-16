@@ -18,8 +18,7 @@ type BlockHash struct {
 
 // TODO: Possible optimization, the result of Pow could be cached since we always use the same #
 func HashFile(strFilepath string) []BlockHash {
-	var c, startWindowPosition, index, cmatch, lenMin, lenMax, lenCurr int = 0, 0, 0, 0, -1, -1, -1
-	var under, _100, _200, _300, _400, _500, _plus int = 0, 0, 0, 0, 0, 0, 0
+	var c, startWindowPosition, index, cmatch, lenCurr int = 0, 0, 0, 0, -1
 	var hash uint64 = 0
 	var currByte byte
 	var window WindowBytes
@@ -65,28 +64,6 @@ func HashFile(strFilepath string) []BlockHash {
 	for {
 		// Check if we fit the match, and at least a certain amount of bytes
 		if (hash | HASH_MASK) == hash {
-			if lenMax == -1 || lenCurr > lenMax {
-				lenMax = lenCurr
-			}
-			if lenMin == -1 || lenCurr < lenMin {
-				lenMin = lenCurr
-			}
-
-			if lenCurr < 50000 {
-				under++
-			} else if lenCurr < 100000 {
-				_100++
-			} else if lenCurr < 200000 {
-				_200++
-			} else if lenCurr < 300000 {
-				_300++
-			} else if lenCurr < 400000 {
-				_400++
-			} else if lenCurr < 600000 {
-				_500++
-			} else {
-				_plus++
-			}
 
 			// New match, md5 it
 			cmatch++
@@ -135,9 +112,6 @@ func HashFile(strFilepath string) []BlockHash {
 
 	fmt.Printf("Found %d matches!\n", cmatch)
 	fmt.Printf("Went through %d bytes!\n", c)
-	fmt.Printf("Min block %d bytes!\n", lenMin)
-	fmt.Printf("Max block %d bytes!\n", lenMax)
-	fmt.Printf("%d, %d, %d, %d, %d, %d, %d\n\n", under, _100, _200, _300, _400, _500, _plus)
 
 	return arrBlockHash
 }

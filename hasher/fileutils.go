@@ -58,13 +58,15 @@ func UpdateDeltaData(arrFileChange []FileChange, strFilepath string) {
 // 3. Temp file renamed to original
 // 4. Do some file integrity checking
 // 5. If all goes well, remove original
-// TODO: Change .tmp extension to avoid possible collision (random?)
 func UpdateDestinationFile(arrFileChange []FileChange, strFilepath string, rootDir string) {
-	// TODO: Check if we need to manually split chunks of data read
-
 	var iToRead, iLastFilePointerPosition int = 0, 0
 	var strProcessingDir = rootDir + PROCESSING_DIR + string(filepath.Separator)
 	var strTempFilepath = strProcessingDir + filepath.Base(strFilepath)
+
+	// Prepare our processing dir
+	if !CreateDirIfNotExists(strProcessingDir) {
+		log.Fatal("Could not prepare processing dir")
+	}
 
 	// open input file
 	fi, err := os.Open(strFilepath)
@@ -166,7 +168,7 @@ func UpdateDestinationFile(arrFileChange []FileChange, strFilepath string, rootD
 	os.Remove(strTempFilepath + ".orig")
 
 	// Renaming old file
-	if err = os.Rename(strFilepath, strTempFilepath+".orig"); err != nil {
+	if err = os.Rename(strFilepath, strTempFilepath + ".orig"); err != nil {
 		fmt.Println("Error when renaming old file ", err)
 		return
 	}
@@ -210,9 +212,7 @@ func CreateFileIfNotExists(strFilepath string) bool {
 }
 
 //
-func PrepareProcessingDir(strDirpath string) bool {
-	// Create dir if does not exists
-	strDir := strDirpath + PROCESSING_DIR
+func CreateDirIfNotExists(strDir string) bool {
 	if _, err := os.Stat(strDir); err != nil {
 		err := os.MkdirAll(strDir, 0775)
 		if err != nil {

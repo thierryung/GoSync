@@ -11,8 +11,10 @@ package main
 // TODO: Check better to declare global variables or pass through all methods (i.e. chanClientChange, chanClientAdd) (ask a gopher)
 // TODO: Check TCP connections better to reconnect, keep live, heartbeat? (ask a gopher)
 // TODO: New empty folders, also sync. Right now folders are synced when new content updated.
+// TODO: Comment them all!
 // TODO: Folder renaming, file renaming
 // TODO: Folder and file remove
+// TODO: Connection to client also use for once in a while ping and remove if disconnect
 // TODOING: Defer all file closing?
 // TODOING: Handle errors, especially from readFull (when we still have bytes but have reached the end)
 // TODONE: When reading, need to remember what is the current length in window (say we read less than len(window))
@@ -23,6 +25,8 @@ package main
 // TODO FEATURE: Compress data before sending
 // TODO FEATURE: Detect moving file with couple hashes as to not transfer again
 // TODO FEATURE: Shared Folders
+// TODO FEATURE: Possibly ping every so often client for updates and vice versa
+// TODO FEATURE: For the above, another addition would be to queue (and group similar fast) updates from client
 // Tests: No file on either end (2 tests)
 // Tests: No folder on either end (2 tests)
 // Tests: Properly terminate/restart connection (on client) when one end closes
@@ -46,9 +50,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime/pprof"
 	"strings"
-	"time"
 
 	"thierry/sync/hasher"
 )
@@ -61,7 +63,10 @@ type FileHashResult struct {
 	StrRelativeFilepath string
 	UpdaterClientId     string
 	ArrBlockHash        []hasher.BlockHash
-	IsClientUpdate      bool
+	// Indicate if this is a client update request
+	IsClientUpdate bool
+	// Indicates if this is a delete file/folder request
+	IsDelete bool
 }
 
 type FileChangeList struct {
@@ -98,12 +103,18 @@ func handleConnection(conn net.Conn,
 	fileHashResult := &FileHashResult{}
 	err := decoder.Decode(fileHashResult)
 	if err != nil {
-		log.Fatal("Connection error from client (check receive/ping): ", err)
+		fmt.Println("Connection error from client (check receive/ping): ", err, conn.RemoteAddr().String())
+		conn.Close()
+		return
 	}
 
 	// Split here, we're receiving data from client
 	if fileHashResult.IsClientUpdate == true {
-		processUpdateFromClient(client, fileHashResult, chanClientChange)
+		if fileHashResult.IsDelete == true {
+			processDeleteFromClient(client, fileHashResult, chanClientChange)
+		} else {
+			processUpdateFromClient(client, fileHashResult, chanClientChange)
+		}
 	} else {
 		// Add new client into our client list
 		chanClientAdd <- &client
@@ -117,8 +128,9 @@ func processUpdateFromClient(client ClientConnection,
 
 	// Check if file exists, if not create it
 	// TODO: Possible optimization here, skip all processes just upload it
-	if hasher.CheckFileExists(strAbsoluteFilepath) != true {
+	if hasher.CreateFileIfNotExists(strAbsoluteFilepath) != true {
 		fmt.Println("Error while creating local file, aborting update from client", strAbsoluteFilepath)
+		return
 	}
 
 	// We do our hashing
@@ -131,6 +143,7 @@ func processUpdateFromClient(client ClientConnection,
 	// Compare two files
 	var arrFileChange []hasher.FileChange
 	arrFileChange = hasher.CompareFileHashes(fileHashResult.ArrBlockHash, arrBlockHash)
+	// TODO: If no changes on server, just skip the rest from here
 	fmt.Printf("We found %d changes!\n", len(arrFileChange))
 
 	// Get difference data from client
@@ -149,7 +162,30 @@ func processUpdateFromClient(client ClientConnection,
 	}
 
 	// Update destination file
-	hasher.UpdateDestinationFile(arrFileChange, strAbsoluteFilepath)
+	hasher.UpdateDestinationFile(arrFileChange, strAbsoluteFilepath, configuration.RootDir)
+
+	// Send update to all other clients
+	fileHashResult.UpdaterClientId = strings.Split(client.conn.RemoteAddr().String(), ":")[0]
+	chanClientChange <- fileHashResult
+}
+
+func processDeleteFromClient(client ClientConnection,
+	fileHashResult *FileHashResult,
+	chanClientChange chan *FileHashResult) {
+	strAbsoluteFilepath := configuration.RootDir + filepath.FromSlash(fileHashResult.StrRelativeFilepath)
+
+	// Check if file exists, if not skip it all
+	if _, err := os.Stat(strAbsoluteFilepath); err != nil {
+		fmt.Println("File to delete from client doesn't exist, skip it locally", strAbsoluteFilepath)
+
+	} else {
+		// Delete file on server
+		fmt.Println("Removing all under", strAbsoluteFilepath)
+		err := os.RemoveAll(strAbsoluteFilepath)
+		if err != nil {
+			fmt.Println("There was an error removing...", strAbsoluteFilepath)
+		}
+	}
 
 	// Send update to all other clients
 	fileHashResult.UpdaterClientId = strings.Split(client.conn.RemoteAddr().String(), ":")[0]
@@ -208,30 +244,60 @@ func processUpdateToClient(client *ClientConnection,
 	client.isInUse = false
 }
 
+func processDeleteToClient(client *ClientConnection,
+	fileHashResult *FileHashResult,
+	chanClientRemove chan *ClientConnection) {
+	// Mark as in use
+	// TODO: Check if really needed?
+	if client.isInUse {
+		fmt.Println("Client currently in use", client.conn.RemoteAddr())
+		return
+	}
+	client.isInUse = true
+	fmt.Println("Do delete to client ", client.conn.RemoteAddr())
+
+	// Send delete from server into client
+
+	// 1. Sending result to client for update
+	fmt.Println("1. Sending delete to client...", client.conn.RemoteAddr())
+	err := client.encoder.Encode(fileHashResult)
+	if err != nil {
+		chanClientRemove <- client
+		fmt.Println("Client disconnected (processUpdateToClient/sending result)", err, client.conn.RemoteAddr().String())
+		return
+	}
+	fmt.Println("Done with client", client.conn.RemoteAddr().String())
+	client.isInUse = false
+}
+
 // prepareUpdateToClient .......
 // also pre-hashes file server side
-func prepareUpdateToClient(fileHashResult *FileHashResult) FileHashResult {
+func prepareUpdateToClient(fileHashResult *FileHashResult) {
 	// Hashing file on our end
+	fmt.Println("Preparing new hash file for client update")
 	strAbsoluteFilepath := configuration.RootDir + filepath.FromSlash(fileHashResult.StrRelativeFilepath)
-	arrBlockHash := hasher.HashFile(strAbsoluteFilepath)
-
-	return FileHashResult{StrRelativeFilepath: fileHashResult.StrRelativeFilepath, ArrBlockHash: arrBlockHash}
+	fileHashResult.ArrBlockHash = hasher.HashFile(strAbsoluteFilepath)
 }
 
 func processAllClients(chanClientChange chan *FileHashResult, chanClientAdd chan *ClientConnection, chanClientRemove chan *ClientConnection) {
 	clients := make(map[string]*ClientConnection)
 
+	// TODO: Less nested loops here
 	for {
 		select {
 		// Process client changes
-		case change := <-chanClientChange:
-			fileHashResult := prepareUpdateToClient(change)
-			fmt.Println("New change: ", change)
-			fmt.Println("File hash result: ", fileHashResult)
+		case fileHashResult := <-chanClientChange:
+			prepareUpdateToClient(fileHashResult)
+			fmt.Println("New change: ", fileHashResult)
 			for _, client := range clients {
-				if change.UpdaterClientId != strings.Split(client.conn.RemoteAddr().String(), ":")[0] {
-					fmt.Printf("Sending update to client ip %s, original client ip %s\n", client.conn.RemoteAddr(), change.UpdaterClientId)
-					go processUpdateToClient(client, &fileHashResult, chanClientRemove)
+				if fileHashResult.UpdaterClientId == strings.Split(client.conn.RemoteAddr().String(), ":")[0] {
+					continue
+				}
+				fmt.Printf("Sending update to client ip %s, original client ip %s\n", client.conn.RemoteAddr(), fileHashResult.UpdaterClientId)
+				if fileHashResult.IsDelete == true {
+					go processDeleteToClient(client, fileHashResult, chanClientRemove)
+				} else {
+					go processUpdateToClient(client, fileHashResult, chanClientRemove)
 				}
 			}
 			// Process new clients
@@ -262,36 +328,6 @@ func main() {
 	}
 	fmt.Println("Root dir setup:", configuration.RootDir)
 
-	/* // var strFilepath string = "/home/thierry/projects/vol1"
-	// var strFilepath2 string = "/home/thierry/projects/vol2"
-	var strFilepath1 string = "volclientlocal.txt"
-	var strFilepath2 string = "volserverlocal.txt"
-
-	var arrBlockHash []hasher.BlockHash
-	var arrBlockHash2 []hasher.BlockHash
-	var arrFileChange []hasher.FileChange
-
-	// Hash file 1
-	arrBlockHash = hasher.HashFile(configuration.RootDir + strFilepath1)
-	fmt.Println(arrBlockHash)
-
-	// Hash file 2
-	arrBlockHash2 = hasher.HashFile(configuration.RootDir + strFilepath2)
-	fmt.Println(arrBlockHash2)
-
-	// Compare two files
-	arrFileChange = hasher.CompareFileHashes(arrBlockHash, arrBlockHash2)
-	fmt.Printf("We found %d changes!\n", len(arrFileChange))
-	fmt.Println(arrFileChange)
-
-	// Get difference data
-	hasher.UpdateDeltaData(arrFileChange, configuration.RootDir + strFilepath1)
-	fmt.Println(arrFileChange)
-
-	// Update destination file
-	hasher.UpdateDestinationFile(arrFileChange, configuration.RootDir + strFilepath2)
-	os.Exit(0) */
-
 	fmt.Println("Starting server...")
 
 	flag.Parse()
@@ -304,7 +340,6 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
-	start := time.Now()
 	// Changes from originator updater client will be funneled here
 	chanClientChange := make(chan *FileHashResult)
 	// Clients to add will be funneled here
@@ -336,17 +371,5 @@ func main() {
 		}
 		defer conn.Close()
 		go handleConnection(conn, chanClientChange, chanClientAdd) // a goroutine handles conn so that the loop can accept other connections
-	}
-
-	elapsed := time.Since(start)
-	fmt.Printf("Binomial took %s\n", elapsed)
-
-	if *memprofile != "" {
-		f1, err := os.Create(*memprofile)
-		if err != nil {
-			log.Fatal(err)
-		}
-		pprof.WriteHeapProfile(f1)
-		f1.Close()
 	}
 }
